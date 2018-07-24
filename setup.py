@@ -20,4 +20,4 @@ __build__ = '{}'
 setup(name='zaluski',
       version=__version__,
       packages=find_packages(),
-      install_requires=['sortedcontainers'])
+      install_requires=['sortedcontainers', 'dill', 'numpy', 'mpi4py'])

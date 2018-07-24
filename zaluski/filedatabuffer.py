@@ -30,7 +30,7 @@ import zlib
 import hashlib
 import os, io, time
 import json, base64
-import inspect
+import warnings, inspect
 import fcntl
 from functools import reduce
 
@@ -42,7 +42,7 @@ from mpi4py import MPI
 
 ### Constants
 
-DEBUG = False
+DEBUG = True
 VERSION = '0.2.0'
 CACHE_NAME = '.zaluski_cache'
 
@@ -50,12 +50,11 @@ MPICOMM = MPI.COMM_WORLD
 MPIRANK = MPICOMM.Get_rank()
 MPISIZE = MPICOMM.Get_size()
 MPISTATUS = MPI.Status()
-MPI.pickle.dumps = dill.dumps # upgrade
-MPI.pickle.loads = dill.loads # upgrade
+MPI.pickle = dill # upgrade
 
 ### Debug functions
 
-def __DEBUG_OUT(*args, **kwargs):
+def _DEBUG_OUT(*args, **kwargs):
     '''Print something, but only if DEBUG is True. Also, always flush output.'''
     if DEBUG:
         print('DEBUG: ', end='')
@@ -65,6 +64,7 @@ def __DEBUG_OUT(*args, **kwargs):
         return args[0]
     except IndexError:
         pass
+_DEBUG_OUT('Debug is on.')
 
 ### Decorators
 
@@ -102,7 +102,7 @@ def compress_ndarray(array):
     # [bunch of bits as Base 85-encoded string,
     #  tuple containing matrix side lengths]
     # this 7 is the compression level --------------------- V
-    return [base64.b85encode(zlib.compress(array.tobytes(), 7)) \
+    return [base64.b85encode(zlib.compress(array.tobytes(), 7))
                   .decode(encoding='utf-8'),
             array.shape,
             str(array.dtype)]
@@ -153,8 +153,7 @@ class Argument:
                 self.value = type(value)(encapsulate(path) for path in value)
     @property
     def accessor_items(self):
-        '''Items to add to the accessor tuple for this
-        argument.'''
+        '''Items to add to the accessor tuple for this argument.'''
         if self.base_type == 'misc':
             yield self.value
             return
@@ -172,8 +171,8 @@ class Argument:
             return
     @property
     def encapsulated_files(self):
-        '''Encapsulated files to add to self_.encapsulated_files
-        for this argument.'''
+        '''Encapsulated files to add to self_.encapsulated_files for this
+        argument.'''
         if self.base_type == 'misc':
             return
         if self.container_type == '':
@@ -204,7 +203,7 @@ class Argument:
 class ProtoArgs():
     '''An object that get_ and gather_ methods use to construct arguments to
     call their associated calculate_ methods with. More information under
-    FileDataBuffer.__proto_args().'''
+    FileDataBuffer._proto_args().'''
     def __init__(self, calcfxn, encapsulate, args, kwargs):
         # index of each argument (with number indices for positional
         # arguments, but string indices for keyword arguments); needed
@@ -227,8 +226,8 @@ class ProtoArgs():
         argspec = inspect.getfullargspec(calcfxn)
         accessor_list = []
         lendefaults = len(argspec.defaults) \
-                            if argspec.defaults is not None \
-                        else 0
+                      if argspec.defaults is not None \
+                      else 0
         # start from 1 because we skip over self
         if lendefaults > 0:
             positargs = argspec.args[1:-lendefaults]
@@ -242,11 +241,11 @@ class ProtoArgs():
             accessor_list.extend(arg.accessor_items)
         if lendefaults > 0:
             namedargs = (argspec.args[-lendefaults:] + \
-                            argspec.kwonlyargs)
+                         argspec.kwonlyargs)
         else:
             namedargs = argspec.kwonlyargs
         namedargs = (kwarg for kwarg in namedargs \
-                        if kwarg in kwargs.keys())
+                     if kwarg in kwargs.keys())
         for kwarg_name in namedargs:
             self.indices.append(kwarg_name)
             arg = Argument(kwarg_name, kwargs[kwarg_name], encapsulate)
@@ -355,8 +354,8 @@ class EncapsulatedFile:
         self.update(mtime)
         if self._stream is None:
             return None
-        return io.StringIO(self._stream \
-                               .getvalue() \
+        return io.StringIO(self._stream
+                               .getvalue()
                                .decode(encoding))
     def update_file_paths_dict(self):
         '''Make this EncapsulatedFile's master FileDataBuffer aware of the mtime
@@ -379,7 +378,7 @@ class EncapsulatedFile:
 
 ### FileDataBuffer and friends
 
-def __make_get(data_name):
+def _make_get(data_name):
     '''Create a get_ accessor function for a FileDataBuffer data type.'''
     # Python duck typing philosophy says we shouldn't do any explicit checking
     # of the thing stored at the attribute, but in any case, it should be a
@@ -387,46 +386,46 @@ def __make_get(data_name):
     # arguments being hashables. See the FileDataBuffer docs for more info.
     def get(self_, *args, **kwargs):
         calculate = getattr(self_, 'calculate_'+data_name)
-        proto_args = self_.__proto_args(data_name, args, kwargs)
+        proto_args = self_._proto_args(data_name, args, kwargs)
         if hasattr(calculate, 'non_cacheable'):
             return calculate(*proto_args.calcargs,
                              **proto_args.calckwargs)
         for path in proto_args.paths:
             self_.retrieve_data_from_cache(os.path.dirname(path))
-        file_data = self_.data.setdefault(proto_args.prime_hash, {}) \
-                              .setdefault(data_name, {})
+        file_data = self_.data \
+                         .setdefault(proto_args.prime_hash, {}) \
+                         .setdefault(data_name, {})
         try:
             if hasattr(self_, 'import_'+data_name):
                 return getattr(self_, 'import_'+data_name) \
                               (file_data[proto_args.accessor_string])
             return file_data[proto_args.accessor_string]
         except KeyError:
-            # construct new args
-            if self_.calculatingp:
-                if hasattr(self_, 'export_'+data_name):
-                    file_data[proto_args.accessor_string] = \
-                        getattr(self_, 'export_'+data_name) \
-                               (calculate(*proto_args.calcargs,
-                                          **proto_args.calckwargs))
-                else:
-                    file_data[proto_args.accessor_string] = \
-                        calculate(*proto_args.calcargs,
-                                  **proto_args.calckwargs)
-                self_.changed_dirs.update(os.path.dirname(path) \
-                                        for path in proto_args.paths)
-                self_.update_caches()
-                if hasattr(self_, 'import_'+data_name):
-                    return getattr(self_, 'import_'+data_name) \
-                                  (file_data[proto_args.accessor_string])
-                return file_data[proto_args.accessor_string]
-            else:
+            if not self_.calculatingp:
                 raise KeyError('That file\'s not in the cache.')
+            # construct new args
+            if hasattr(self_, 'export_'+data_name):
+                file_data[proto_args.accessor_string] = \
+                    getattr(self_, 'export_'+data_name) \
+                           (calculate(*proto_args.calcargs,
+                                      **proto_args.calckwargs))
+            else:
+                file_data[proto_args.accessor_string] = \
+                    calculate(*proto_args.calcargs,
+                              **proto_args.calckwargs)
+            self_.changed_dirs.update(os.path.dirname(path) \
+                                      for path in proto_args.paths)
+            self_.update_caches()
+            if hasattr(self_, 'import_'+data_name):
+                return getattr(self_, 'import_'+data_name) \
+                              (file_data[proto_args.accessor_string])
+            return file_data[proto_args.accessor_string]
     get.__name__ = 'get_'+data_name
     get.__doc__  = 'Call calculate_'+data_name+ \
                    '() on a file path with caching magic.'
     return get
 
-def __make_gather(data_name):
+def _make_gather(data_name):
     '''Make a gather_ accessor for a FileDataBuffer that concurrently operates
     on a list of values for an argument,  instead of a single value.'''
     def gather(self_, *args, argi=0, **kwargs):
@@ -453,7 +452,7 @@ def __make_gather(data_name):
                 std_argi = [std_argi]
             argspec = inspect.getfullargspec(calculate)
             lendefaults = len(argspec.defaults) \
-                              if argspec.defaults is not None \
+                          if argspec.defaults is not None \
                           else 0
             # Using Functional CodeTM, do for all possible combinations of args
             # from the lists received for the listified args:
@@ -503,7 +502,7 @@ def __make_gather(data_name):
                             MPISTATUS.Get_source(),
                             MPISTATUS.Get_tag())
                 def save_result(index, proto_args, result_data, exportp=True):
-                    __DEBUG_OUT('about to save result for ' + \
+                    _DEBUG_OUT('about to save result for ' + \
                               proto_args.prime_path)
                     proto_args.update_paths()
                     file_data = self_.data.setdefault(proto_args.prime_hash,
@@ -519,7 +518,7 @@ def __make_gather(data_name):
                                               proto_args.prime_hash,
                                               data_name,
                                               proto_args.accessor_string])
-                    __DEBUG_OUT('just saved result for ' + proto_args.prime_path)
+                    _DEBUG_OUT('just saved result for ' + proto_args.prime_path)
                 ## main loop
                 for index, uargs_and_ukwargs in enumerate(unpack_args()):
                     uargs, ukwargs = uargs_and_ukwargs
@@ -539,11 +538,11 @@ def __make_gather(data_name):
                                     exportp=False)
                     except (KeyError, AssertionError):
                         result, result_source, result_tag = recv_result()
-                        __DEBUG_OUT('assigning ' + proto_args.prime_path + \
+                        _DEBUG_OUT('assigning ' + proto_args.prime_path + \
                                   ' to ' + str(result_source))
                         MPICOMM.send([index, proto_args],
                                      dest=result_source, tag=MPITag.WORK_TAG)
-                        __DEBUG_OUT('assignment sent')
+                        _DEBUG_OUT('assignment sent')
                         if result_tag == MPITag.DONE_TAG:
                             save_result(*result)
                             self_.changed_dirs \
@@ -554,16 +553,16 @@ def __make_gather(data_name):
                 ## clean up workers once we run out of stuff to assign
                 for _ in range(MPISIZE-1):
                     result, result_source, result_tag = recv_result()
-                    __DEBUG_OUT('data received from '+str(result_source))
+                    _DEBUG_OUT('data received from '+str(result_source))
                     if result_tag == MPITag.DONE_TAG:
                         save_result(*result)
                         self_.changed_dirs.update(os.path.dirname(path) \
                                                   for path in result[1].paths)
                         self_.update_caches()
-                    __DEBUG_OUT('all files done. killing '+str(result_source))
+                    _DEBUG_OUT('all files done. killing '+str(result_source))
                     MPICOMM.send(MPITag.QUIT_TAG,
                                  dest=result_source, tag=MPITag.WORK_TAG)
-                    __DEBUG_OUT('worker killed')
+                    _DEBUG_OUT('worker killed')
             else:
                 MPICOMM.send(None, dest=0, tag=MPITag.READY_TAG)
                 while True:
@@ -691,6 +690,15 @@ class FileDataBuffer():
         for data_name in (attribute_name[10:] \
                           for attribute_name in attribute_names \
                           if attribute_name.startswith('calculate_')):
+            calcfxn = getattr(self, 'calculate_'+data_name)
+
+            # Rationale for this warning: The point at which the buffer
+            # actually fails when you forget a self arg is deep inside
+            # ProtoArgs, which is very cryptic and hard to debug.
+            if inspect.getfullargspec(calcfxn).args[0] != 'self':
+                warnings.warn('Added method calculate_' + data_name + \
+                              ' has no self arg.', SyntaxWarning)
+
             # specialized import/export functions
             special_porters = \
                 (('returns_ndarray',    (decompress_ndarray,
@@ -698,7 +706,7 @@ class FileDataBuffer():
                  ('returns_pickleable', (decompress_pickleable,
                                          compress_pickleable)))
             for attribute, (import_func, export_func) in special_porters:
-                if hasattr(getattr(self, 'calculate_'+data_name), attribute):
+                if hasattr(calcfxn, attribute):
                     setattr(self, 'import_'+data_name,
                             types.MethodType(lambda self_, x, __f=import_func:
                                                  __f(x),
@@ -710,13 +718,13 @@ class FileDataBuffer():
                     break
             # get_ function
             setattr(self, 'get_'+data_name,
-                    types.MethodType(__make_get(data_name),
+                    types.MethodType(_make_get(data_name),
                                      self))
             # gather_ function
             setattr(self, 'gather_'+data_name,
-                    types.MethodType(__make_gather(data_name),
+                    types.MethodType(_make_gather(data_name),
                                      self))
-    def retrieve_data_from_cache(self, dirpath, cache_fd=None):
+    def retrieve_data_from_cache(self, dirpath, _update_caches_fd=None):
         '''Retrieves data from a cache file of a directory. The data in the file
         is a JSON of a data dict and a file_paths list of a FileDataBuffer,
         except instead of file paths, it has just filenames.'''
@@ -730,27 +738,26 @@ class FileDataBuffer():
             if diskmtime > ourmtime:
                 file_contents = None
                 retrieved = None
-                if cache_fd is not None:
-                    pos = cache_fd.tell()
-                    cache_fd.seek(0)
-                    file_contents = cache_fd.read()
-                    __DEBUG_OUT('cache at '+cache_fd.name+' read')
-                    cache_fd.seek(pos)
+                if _update_caches_fd is not None:
+                    pos = _update_caches_fd.tell()
+                    _update_caches_fd.seek(0)
+                    file_contents = _update_caches_fd.read()
+                    if file_contents:
+                        _DEBUG_OUT('cache at '+_update_caches_fd.name+' read')
+                    _update_caches_fd.seek(pos)
                 else:
-                    try:
-                        with open(cache_path, 'r') as cache_file:
-                            file_contents = cache_file.read()
-                            __DEBUG_OUT('cache at '+cache_file.name+' read')
-                    except FileNotFoundError:
-                        pass
+                    with open(cache_path, 'r') as cache_file:
+                        file_contents = cache_file.read()
+                        _DEBUG_OUT('cache at '+cache_file.name+' read')
                 try:
                     retrieved = json.loads(file_contents)
                 except json.JSONDecodeError:
-                    print('Could not interpret cache file at '+cache_path)
-                    print('You should probably delete it.')
+                    if file_contents:
+                        print('Could not interpret cache file at '+cache_path)
+                        print('You should probably delete it.')
                     return
                 if retrieved is not None:
-                    __DEBUG_OUT('cache retrieved')
+                    _DEBUG_OUT('cache retrieved')
                     diskdata, disk_file_paths = retrieved
                     for content_key, content in diskdata.items():
                         for data_name, data_keys in content.items():
@@ -761,7 +768,7 @@ class FileDataBuffer():
                                          [data_name] \
                                          [data_key] = data
                     for name, info_pair in disk_file_paths.items():
-                        __DEBUG_OUT('saving info for '+name)
+                        _DEBUG_OUT('saving info for '+name)
                         path = os.path.join(absdirpath, name)
                         our_info_pair = self.file_paths.get(path, None)
                         ourfilemtime = None
@@ -798,7 +805,8 @@ class FileDataBuffer():
                     break
                 except BlockingIOError:
                     time.sleep(0.05)
-            self.retrieve_data_from_cache(dir_path, cache_fd=cache_file)
+            self.retrieve_data_from_cache(dir_path,
+                                          _update_caches_fd=cache_file)
             dir_data = {}
             dir_file_paths = {}
             for name in names:
@@ -809,16 +817,16 @@ class FileDataBuffer():
                     dir_data[ourhash] = self.data[ourhash]
                 except KeyError:
                     pass
-                #__DEBUG_OUT('  updated cache with data for file at ', path)
+                #_DEBUG_OUT('  updated cache with data for file at ', path)
             cache_file.write(json.dumps([dir_data, dir_file_paths], indent=4))
             fcntl.flock(cache_file, fcntl.LOCK_UN)
             cache_file.close()
-            __DEBUG_OUT('wrote cache file at ', cache_path)
+            _DEBUG_OUT('wrote cache file at ', cache_path)
             self.cache_paths[dir_path] = os.path.getmtime(cache_path)
             self.changed_dirs = set()
 
     ## Constructors for auxiliary classes
-    def __proto_args(self, data_name, args, kwargs):
+    def _proto_args(self, data_name, args, kwargs):
         '''Given a set of args for a get_ accessor method, generate an object
         that FileDataBuffer accessor methods can use to both call calculate_
         methods and index into self.data and self.paths, based on
@@ -832,13 +840,15 @@ class FileDataBuffer():
         the sequence in which they were originally part of the calculate_
         method, but this feature is not currently in use.'''
         return ProtoArgs(getattr(self, 'calculate_'+data_name),
-                         self.__encapsulate_file,
+                         self._encapsulate_file,
                          args, kwargs)
 
-    def __encapsulate_file(self, path):
+    def _encapsulate_file(self, path):
         '''Returns an object that in theory contains the absolute path, mtime,
         contents hash, and maybe contents stream of a file. The first three are
         accessed directly, while the last is accessed via an accessor method,
         so that it can be retrieved if necessary. Creating and updating the
         object both update the external FileDataBuffer's info on that pdb.'''
-        return EncapsulatedFile(path, self.file_paths.setdefault(path, {}))
+        return EncapsulatedFile(path,
+                                self.file_paths
+                                    .setdefault(os.path.abspath(path), {}))
