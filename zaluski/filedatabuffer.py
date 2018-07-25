@@ -19,9 +19,6 @@ computation of derived properties of files into essentially a key-value store,
 caching them in the process.'''
 
 ### Imports
-# pylint: disable=import-error
-# pylint: disable=multiple-imports
-
 ## Python Standard Library
 import re
 import types, copy, enum
@@ -42,7 +39,7 @@ from mpi4py import MPI
 
 ### Constants
 
-DEBUG = True
+DEBUG = False
 VERSION = '0.2.0'
 CACHE_NAME = '.zaluski_cache'
 
@@ -136,10 +133,7 @@ class Argument:
                               r'(_list|_set|)')
     def __init__(self, name, value, encapsulate):
         self.name = name
-        if name == 'params':
-            matches = Argument.NAME_MATCHER.fullmatch('path_set')
-        else:
-            matches = Argument.NAME_MATCHER.fullmatch(name)
+        matches = Argument.NAME_MATCHER.fullmatch(name)
         if None in (matches, value):
             self.value          = value
             self.base_type      = 'misc'
@@ -477,126 +471,125 @@ def _make_gather(data_name):
                         newkwargs[i] = value
                 yield (newargs, newkwargs)
         if MPISIZE == 1 or not self_.calculatingp:
-            result = []
+            final_result = []
             for uargs, ukwargs in unpack_args():
                 try:
-                    result.append(getattr(self_, 'get_'+data_name) \
-                                         (*uargs, **ukwargs))
+                    final_result.append(getattr(self_, 'get_'+data_name) \
+                                               (*uargs, **ukwargs))
                 except KeyError:
                     pass
-            return result
-        else:
-            MPITag = enum.Enum('MPITag', 'QUIT_TAG READY_TAG DONE_TAG WORK_TAG')
-            # QUIT_TAG:  getting this instead of a path kills a worker thread
-            # READY_TAG: used once by worker, to sync startup
-            # DONE_TAG:  used by worker to pass result and request new job
-            # WORK_TAG:  used by master to pass next path to worker
-            # will be used to index into self_.data to retrieve final result:
-            file_indices_list = []
-            if MPIRANK == 0:
-                ## helper functions
-                def recv_result():
-                    return (MPICOMM.recv(source=MPI.ANY_SOURCE,
-                                         tag=MPI.ANY_TAG,
-                                         status=MPISTATUS),
-                            MPISTATUS.Get_source(),
-                            MPISTATUS.Get_tag())
-                def save_result(index, proto_args, result_data, exportp=True):
-                    _DEBUG_OUT('about to save result for ' + \
-                              proto_args.prime_path)
-                    proto_args.update_paths()
-                    file_data = self_.data.setdefault(proto_args.prime_hash,
-                                                      {}) \
-                                          .setdefault(data_name, {})
-                    if hasattr(self_, 'export_'+data_name) and \
-                       exportp and cacheablep:
-                        file_data[proto_args.accessor_string] = \
-                            getattr(self_, 'export_'+data_name)(result_data)
-                    else:
-                        file_data[proto_args.accessor_string] = result_data
-                    file_indices_list.append([index,
-                                              proto_args.prime_hash,
-                                              data_name,
-                                              proto_args.accessor_string])
-                    _DEBUG_OUT('just saved result for ' + proto_args.prime_path)
-                ## main loop
-                for index, uargs_and_ukwargs in enumerate(unpack_args()):
-                    uargs, ukwargs = uargs_and_ukwargs
-                    proto_args = self_.proto_args(data_name, uargs, ukwargs)
-                    # lazy cache retrieval!
-                    if cacheablep:
-                        for path in proto_args.paths:
-                            self_.retrieve_data_from_cache(os.path.dirname(path))
-                    file_data = self_.data \
-                                     .setdefault(proto_args.prime_hash, {}) \
-                                     .setdefault(data_name, {})
-                    try:
-                        assert cacheablep
-                        save_result(index,
-                                    proto_args,
-                                    file_data[proto_args.accessor_string],
-                                    exportp=False)
-                    except (KeyError, AssertionError):
-                        result, result_source, result_tag = recv_result()
-                        _DEBUG_OUT('assigning ' + proto_args.prime_path + \
-                                  ' to ' + str(result_source))
-                        MPICOMM.send([index, proto_args],
-                                     dest=result_source, tag=MPITag.WORK_TAG)
-                        _DEBUG_OUT('assignment sent')
-                        if result_tag == MPITag.DONE_TAG:
-                            save_result(*result)
-                            self_.changed_dirs \
-                                 .update(os.path.dirname(path) \
-                                         for path \
-                                         in result[1].paths)
-                            self_.update_caches()
-                ## clean up workers once we run out of stuff to assign
-                for _ in range(MPISIZE-1):
+            return final_result
+        MPITag = enum.Enum('MPITag', 'QUIT_TAG READY_TAG DONE_TAG WORK_TAG')
+        # QUIT_TAG:  getting this instead of a path kills a worker thread
+        # READY_TAG: used once by worker, to sync startup
+        # DONE_TAG:  used by worker to pass result and request new job
+        # WORK_TAG:  used by master to pass next path to worker
+        # will be used to index into self_.data to retrieve final result:
+        file_indices_list = []
+        if MPIRANK == 0:
+            ## helper functions
+            def recv_result():
+                return (MPICOMM.recv(source=MPI.ANY_SOURCE,
+                                     tag=MPI.ANY_TAG,
+                                     status=MPISTATUS),
+                        MPISTATUS.Get_source(),
+                        MPISTATUS.Get_tag())
+            def save_result(index, proto_args, result_data, exportp=True):
+                _DEBUG_OUT('about to save result for ' + \
+                          proto_args.prime_path)
+                proto_args.update_paths()
+                file_data = self_.data.setdefault(proto_args.prime_hash,
+                                                  {}) \
+                                      .setdefault(data_name, {})
+                if hasattr(self_, 'export_'+data_name) and \
+                   exportp and cacheablep:
+                    file_data[proto_args.accessor_string] = \
+                        getattr(self_, 'export_'+data_name)(result_data)
+                else:
+                    file_data[proto_args.accessor_string] = result_data
+                file_indices_list.append([index,
+                                          proto_args.prime_hash,
+                                          data_name,
+                                          proto_args.accessor_string])
+                _DEBUG_OUT('just saved result for ' + proto_args.prime_path)
+            ## main loop
+            for index, uargs_and_ukwargs in enumerate(unpack_args()):
+                uargs, ukwargs = uargs_and_ukwargs
+                proto_args = self_.proto_args(data_name, uargs, ukwargs)
+                # lazy cache retrieval!
+                if cacheablep:
+                    for path in proto_args.paths:
+                        self_.retrieve_data_from_cache(os.path.dirname(path))
+                file_data = self_.data \
+                                 .setdefault(proto_args.prime_hash, {}) \
+                                 .setdefault(data_name, {})
+                try:
+                    assert cacheablep
+                    save_result(index,
+                                proto_args,
+                                file_data[proto_args.accessor_string],
+                                exportp=False)
+                except (KeyError, AssertionError):
                     result, result_source, result_tag = recv_result()
-                    _DEBUG_OUT('data received from '+str(result_source))
+                    _DEBUG_OUT('assigning ' + proto_args.prime_path + \
+                              ' to ' + str(result_source))
+                    MPICOMM.send([index, proto_args],
+                                 dest=result_source, tag=MPITag.WORK_TAG)
+                    _DEBUG_OUT('assignment sent')
                     if result_tag == MPITag.DONE_TAG:
                         save_result(*result)
-                        self_.changed_dirs.update(os.path.dirname(path) \
-                                                  for path in result[1].paths)
+                        self_.changed_dirs \
+                             .update(os.path.dirname(path) \
+                                     for path \
+                                     in result[1].paths)
                         self_.update_caches()
-                    _DEBUG_OUT('all files done. killing '+str(result_source))
-                    MPICOMM.send(MPITag.QUIT_TAG,
-                                 dest=result_source, tag=MPITag.WORK_TAG)
-                    _DEBUG_OUT('worker killed')
-            else:
-                MPICOMM.send(None, dest=0, tag=MPITag.READY_TAG)
-                while True:
-                    package = MPICOMM.recv(source=0, tag=MPITag.WORK_TAG)
-                    if package == MPITag.QUIT_TAG:
-                        break
-                    index, proto_args = package
-                    result_data = calculate(*proto_args.calcargs,
-                                            **proto_args.calckwargs)
-                    MPICOMM.send(copy.copy([index,
-                                            proto_args,
-                                            result_data]),
-                                 dest=0, tag=MPITag.DONE_TAG)
-            # Synchronize everything that could have possibly changed:
-            self_.data = MPICOMM.bcast(self_.data, root=0)
-            self_.file_paths = MPICOMM.bcast(self_.file_paths, root=0)
-            self_.cache_paths = MPICOMM.bcast(self_.cache_paths, root=0)
-            file_indices_list = MPICOMM.bcast(file_indices_list, root=0)
-            # All threads should be on the same page at this point.
-            file_indices_list.sort(key=lambda x: x[0])
-            # Sort by the index produced by enumerating unpack_args() above.
-            if hasattr(self_, 'import_'+data_name) and cacheablep:
-                retval = [getattr(self_, 'import_'+data_name) \
-                                 (self_.data[indices[1]] \
-                                            [indices[2]] \
-                                            [indices[3]]) \
-                          for indices in file_indices_list]
-            else:
-                retval = [self_.data[indices[1]][indices[2]][indices[3]] \
-                          for indices in file_indices_list]
-            if not cacheablep:
-                for indices in file_indices_list:
-                    del self_.data[indices[1]][indices[2]][indices[3]]
-            return retval
+            ## clean up workers once we run out of stuff to assign
+            for _ in range(MPISIZE-1):
+                result, result_source, result_tag = recv_result()
+                _DEBUG_OUT('data received from '+str(result_source))
+                if result_tag == MPITag.DONE_TAG:
+                    save_result(*result)
+                    self_.changed_dirs.update(os.path.dirname(path) \
+                                              for path in result[1].paths)
+                    self_.update_caches()
+                _DEBUG_OUT('all files done. killing '+str(result_source))
+                MPICOMM.send(MPITag.QUIT_TAG,
+                             dest=result_source, tag=MPITag.WORK_TAG)
+                _DEBUG_OUT('worker killed')
+        else:
+            MPICOMM.send(None, dest=0, tag=MPITag.READY_TAG)
+            while True:
+                package = MPICOMM.recv(source=0, tag=MPITag.WORK_TAG)
+                if package == MPITag.QUIT_TAG:
+                    break
+                index, proto_args = package
+                result_data = calculate(*proto_args.calcargs,
+                                        **proto_args.calckwargs)
+                MPICOMM.send(copy.copy([index,
+                                        proto_args,
+                                        result_data]),
+                             dest=0, tag=MPITag.DONE_TAG)
+        # Synchronize everything that could have possibly changed:
+        self_.data = MPICOMM.bcast(self_.data, root=0)
+        self_.file_paths = MPICOMM.bcast(self_.file_paths, root=0)
+        self_.cache_paths = MPICOMM.bcast(self_.cache_paths, root=0)
+        file_indices_list = MPICOMM.bcast(file_indices_list, root=0)
+        # All threads should be on the same page at this point.
+        file_indices_list.sort(key=lambda x: x[0])
+        # Sort by the index produced by enumerating unpack_args() above.
+        if hasattr(self_, 'import_'+data_name) and cacheablep:
+            retval = [getattr(self_, 'import_'+data_name) \
+                             (self_.data[indices[1]] \
+                                        [indices[2]] \
+                                        [indices[3]]) \
+                      for indices in file_indices_list]
+        else:
+            retval = [self_.data[indices[1]][indices[2]][indices[3]] \
+                      for indices in file_indices_list]
+        if not cacheablep:
+            for indices in file_indices_list:
+                del self_.data[indices[1]][indices[2]][indices[3]]
+        return retval
     # Why doesn't this *work*?
     gather.__name__ = 'gather_'+data_name
     gather.__doc__  = 'Call calculate_'+data_name+ \

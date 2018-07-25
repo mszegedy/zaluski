@@ -1,0 +1,519 @@
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>zaluski package &#8212; zaluski  documentation</title>
+    <link rel="stylesheet" href="../_static/alabaster.css" type="text/css" />
+    <link rel="stylesheet" href="../_static/pygments.css" type="text/css" />
+    <script type="text/javascript" src="../_static/documentation_options.js"></script>
+    <script type="text/javascript" src="../_static/jquery.js"></script>
+    <script type="text/javascript" src="../_static/underscore.js"></script>
+    <script type="text/javascript" src="../_static/doctools.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+   
+  <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <div class="section" id="zaluski-package">
+<h1>zaluski package<a class="headerlink" href="#zaluski-package" title="Permalink to this headline">¶</a></h1>
+<div class="section" id="submodules">
+<h2>Submodules<a class="headerlink" href="#submodules" title="Permalink to this headline">¶</a></h2>
+</div>
+<div class="section" id="module-zaluski.filedatabuffer">
+<span id="zaluski-filedatabuffer-module"></span><h2>zaluski.filedatabuffer module<a class="headerlink" href="#module-zaluski.filedatabuffer" title="Permalink to this headline">¶</a></h2>
+<p>Provides an object, FileDataBuffer, that robustly turns the costly
+computation of derived properties of files into essentially a key-value store,
+caching them in the process.</p>
+<dl class="class">
+<dt id="zaluski.filedatabuffer.Argument">
+<em class="property">class </em><code class="descclassname">zaluski.filedatabuffer.</code><code class="descname">Argument</code><span class="sig-paren">(</span><em>name</em>, <em>value</em>, <em>encapsulate</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/zaluski/filedatabuffer.html#Argument"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#zaluski.filedatabuffer.Argument" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>The object that ProtoArgs uses to represent a single argument.</p>
+<dl class="attribute">
+<dt id="zaluski.filedatabuffer.Argument.NAME_MATCHER">
+<code class="descname">NAME_MATCHER</code><em class="property"> = re.compile('(.*_)?(path|stream)(_list|_set|)')</em><a class="headerlink" href="#zaluski.filedatabuffer.Argument.NAME_MATCHER" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="zaluski.filedatabuffer.Argument.accessor_items">
+<code class="descname">accessor_items</code><a class="headerlink" href="#zaluski.filedatabuffer.Argument.accessor_items" title="Permalink to this definition">¶</a></dt>
+<dd><p>Items to add to the accessor tuple for this argument.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="zaluski.filedatabuffer.Argument.calcvalue">
+<code class="descname">calcvalue</code><a class="headerlink" href="#zaluski.filedatabuffer.Argument.calcvalue" title="Permalink to this definition">¶</a></dt>
+<dd><p>Value of arg for calling <a href="#id1"><span class="problematic" id="id2">calculate_</span></a> with.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="zaluski.filedatabuffer.Argument.encapsulated_files">
+<code class="descname">encapsulated_files</code><a class="headerlink" href="#zaluski.filedatabuffer.Argument.encapsulated_files" title="Permalink to this definition">¶</a></dt>
+<dd><p>Encapsulated files to add to <a href="#id3"><span class="problematic" id="id4">self_</span></a>.encapsulated_files for this
+argument.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="zaluski.filedatabuffer.EncapsulatedFile">
+<em class="property">class </em><code class="descclassname">zaluski.filedatabuffer.</code><code class="descname">EncapsulatedFile</code><span class="sig-paren">(</span><em>path</em>, <em>file_paths_dict</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/zaluski/filedatabuffer.html#EncapsulatedFile"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#zaluski.filedatabuffer.EncapsulatedFile" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>The class responsible for handling access to the paths that are passed to
+a FileDataBuffer, and for keeping track of when they change.</p>
+<dl class="attribute">
+<dt id="zaluski.filedatabuffer.EncapsulatedFile.stream">
+<code class="descname">stream</code><a class="headerlink" href="#zaluski.filedatabuffer.EncapsulatedFile.stream" title="Permalink to this definition">¶</a></dt>
+<dd><p>Stream view of associated file.</p>
+</dd></dl>
+
+<dl class="method">
+<dt id="zaluski.filedatabuffer.EncapsulatedFile.update">
+<code class="descname">update</code><span class="sig-paren">(</span><em>mtime=None</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/zaluski/filedatabuffer.html#EncapsulatedFile.update"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#zaluski.filedatabuffer.EncapsulatedFile.update" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="method">
+<dt id="zaluski.filedatabuffer.EncapsulatedFile.update_file_paths_dict">
+<code class="descname">update_file_paths_dict</code><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/zaluski/filedatabuffer.html#EncapsulatedFile.update_file_paths_dict"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#zaluski.filedatabuffer.EncapsulatedFile.update_file_paths_dict" title="Permalink to this definition">¶</a></dt>
+<dd><p>Make this EncapsulatedFile’s master FileDataBuffer aware of the mtime
+and hash of our associated file.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="zaluski.filedatabuffer.FileDataBuffer">
+<em class="property">class </em><code class="descclassname">zaluski.filedatabuffer.</code><code class="descname">FileDataBuffer</code><a class="reference internal" href="../_modules/zaluski/filedatabuffer.html#FileDataBuffer"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#zaluski.filedatabuffer.FileDataBuffer" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Singleton class that stores information about files, to be used as a data
+buffer. Its purpose is to intelligently abstract the retrieval of
+information about files in such a way that the information is cached and/or
+buffered in the process. The only methods in it that should ideally be used
+externally are the data retrieval methods, and out of those ideally just the
+caching ones (currently <a href="#id5"><span class="problematic" id="id6">get_</span></a> and <a href="#id7"><span class="problematic" id="id8">gather_</span></a> methods). In practice,
+update_caches() is also used externally to force a cache update.</p>
+<p>Internally, it holds a data dict, which indexes all the data first by the
+MD5 hash of the contents of the file that produced the data, then the type
+of data it is (e.g. RMSD or score), and finally the parameters that
+produced the data (like the particular weights on the scorefunction for a
+score). It also holds a dict of paths to files, the contents hashes of these
+files, and the mtime of the file at which the contents hash was produced, so
+that if it is asked about a file whose hash is already known, it does not
+need to recalculate it. Finally, it also holds a dict mapping the caches
+it’s already loaded to their mtimes at which they were loaded, so that it
+does not load a cache unless it’s changed.</p>
+<p>On disk, the data is cached in a .zaluski_cache file that contains a JSON
+array of the data dict and the file paths dict, each with only the entries
+for the file files in the same folder as the cache. If caching is turned on,
+whenever the buffer generates data for a file, it will check whether the
+file’s folder has a cache with that data yet, and if not, it will write one
+(making sure to load any cached data in that folder that already exists).
+Caching is done in a thread-safe manner, with file locks. Throughout the
+reading, updating, and writing of a cache, the buffer will maintain an
+exclusive lock on the cache, so that it doesn’t get updated on disk in
+between its reading and updating/writing, which would cause the first
+update to get lost.</p>
+<p>The ability to get a particular type of data is added to the buffer by
+defining a <a href="#id9"><span class="problematic" id="id10">calculate_</span></a> method. Corresponding <a href="#id11"><span class="problematic" id="id12">get_</span></a> and <a href="#id13"><span class="problematic" id="id14">gather_</span></a> methods are
+created dynamically at initialization, which add caching to the <a href="#id15"><span class="problematic" id="id16">calculate_</span></a>
+method, and in the case of <a href="#id17"><span class="problematic" id="id18">gather_</span></a>, concurrently operate on lists given for
+arguments that normally don’t take them. Because PDB hashes are used as the
+top-level keys in the data dict, each <a href="#id19"><span class="problematic" id="id20">calculate_</span></a> method should take at
+least one PDB, either as a stream or a path. See the comment above the
+<a href="#id21"><span class="problematic" id="id22">calculate_</span></a> methods for more details.</p>
+<p>The internal settings calculatingp and plottingp work like this:</p>
+<blockquote>
+<div><ul class="simple">
+<li><dl class="first docutils">
+<dt>calculatingp = False: The buffer will only retrieve cached information,</dt>
+<dd>never calculating its own data or saving caches. <a href="#id23"><span class="problematic" id="id24">get_</span></a> operations will
+return a KeyError if the data for a file is not in the caches it’s
+loaded, and <a href="#id25"><span class="problematic" id="id26">gather_</span></a> operations will leave a file’s data out of the
+list they return if they can’t find it.</dd>
+</dl>
+</li>
+<li><dl class="first docutils">
+<dt>calculatingp = True, cachingp = False: The buffer will calculate new</dt>
+<dd>information if it doesn’t have it, but never save it. Useful if
+real-time caching is taking too much time, and if instead you want to
+do it manually by calling update_caches(force=True) at select times.
+Note that with cachingp = False, update_caches() doesn’t do anything
+unless you call it with force=True. (This is the case with
+calculatingp = False as well, making it the only real effect of
+cachingp in that case.)</dd>
+</dl>
+</li>
+<li><dl class="first docutils">
+<dt>calculatingp = True, cachingp = True: The buffer will calculate new</dt>
+<dd>information if it doesn’t have it, and save it to disk immediately
+all of the time.</dd>
+</dl>
+</li>
+</ul>
+</div></blockquote>
+<p>The structure of the buffer’s data variables, although summarized above,
+can be stated more succinctly as:</p>
+<p>self.data:
+{ content_key : { data_function_name :</p>
+<blockquote>
+<div>{ data_function_params_tuple : data } } }</div></blockquote>
+<p>self.file_paths:
+{ file_path : { ‘mtime’ : mtime_at_last_hashing,</p>
+<blockquote>
+<div>‘hash’  : contents_hash } }</div></blockquote>
+<p>self.cache_paths:
+{ cache_file_dir_path : mtime_at_last_access }</p>
+<dl class="method">
+<dt id="zaluski.filedatabuffer.FileDataBuffer.retrieve_data_from_cache">
+<code class="descname">retrieve_data_from_cache</code><span class="sig-paren">(</span><em>dirpath</em>, <em>_update_caches_fd=None</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/zaluski/filedatabuffer.html#FileDataBuffer.retrieve_data_from_cache"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#zaluski.filedatabuffer.FileDataBuffer.retrieve_data_from_cache" title="Permalink to this definition">¶</a></dt>
+<dd><p>Retrieves data from a cache file of a directory. The data in the file
+is a JSON of a data dict and a file_paths list of a FileDataBuffer,
+except instead of file paths, it has just filenames.</p>
+</dd></dl>
+
+<dl class="method">
+<dt id="zaluski.filedatabuffer.FileDataBuffer.update_caches">
+<code class="descname">update_caches</code><span class="sig-paren">(</span><em>force=False</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/zaluski/filedatabuffer.html#FileDataBuffer.update_caches"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#zaluski.filedatabuffer.FileDataBuffer.update_caches" title="Permalink to this definition">¶</a></dt>
+<dd><p>Updates the caches for every directory the cache knows about. This
+method is thread-safe.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="zaluski.filedatabuffer.ProtoArgs">
+<em class="property">class </em><code class="descclassname">zaluski.filedatabuffer.</code><code class="descname">ProtoArgs</code><span class="sig-paren">(</span><em>calcfxn</em>, <em>encapsulate</em>, <em>args</em>, <em>kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/zaluski/filedatabuffer.html#ProtoArgs"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#zaluski.filedatabuffer.ProtoArgs" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>An object that <a href="#id27"><span class="problematic" id="id28">get_</span></a> and <a href="#id29"><span class="problematic" id="id30">gather_</span></a> methods use to construct arguments to
+call their associated <a href="#id31"><span class="problematic" id="id32">calculate_</span></a> methods with. More information under
+FileDataBuffer._proto_args().</p>
+<dl class="attribute">
+<dt id="zaluski.filedatabuffer.ProtoArgs.args">
+<code class="descname">args</code><a class="headerlink" href="#zaluski.filedatabuffer.ProtoArgs.args" title="Permalink to this definition">¶</a></dt>
+<dd><p>This ProtoArgs’s represented positional args.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="zaluski.filedatabuffer.ProtoArgs.calcargs">
+<code class="descname">calcargs</code><a class="headerlink" href="#zaluski.filedatabuffer.ProtoArgs.calcargs" title="Permalink to this definition">¶</a></dt>
+<dd><p>The positional arguments used for a <a href="#id33"><span class="problematic" id="id34">calculate_</span></a> call.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="zaluski.filedatabuffer.ProtoArgs.calckwargs">
+<code class="descname">calckwargs</code><a class="headerlink" href="#zaluski.filedatabuffer.ProtoArgs.calckwargs" title="Permalink to this definition">¶</a></dt>
+<dd><p>The keyword arguments used for a <a href="#id35"><span class="problematic" id="id36">calculate_</span></a> call.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="zaluski.filedatabuffer.ProtoArgs.hashes">
+<code class="descname">hashes</code><a class="headerlink" href="#zaluski.filedatabuffer.ProtoArgs.hashes" title="Permalink to this definition">¶</a></dt>
+<dd><p>Unused, except for defining .prime_hash. For symmetry with
+.paths.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="zaluski.filedatabuffer.ProtoArgs.kwargs">
+<code class="descname">kwargs</code><a class="headerlink" href="#zaluski.filedatabuffer.ProtoArgs.kwargs" title="Permalink to this definition">¶</a></dt>
+<dd><p>This ProtoArgs’s represented keyword args.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="zaluski.filedatabuffer.ProtoArgs.paths">
+<code class="descname">paths</code><a class="headerlink" href="#zaluski.filedatabuffer.ProtoArgs.paths" title="Permalink to this definition">¶</a></dt>
+<dd><p>Paths of encapsulated files. Needed by parent FileDataBuffer
+to know where to retrieve caches from before computation is
+performed, and where to update them afterwards. Also forms basis
+of .prime_path.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="zaluski.filedatabuffer.ProtoArgs.prime_hash">
+<code class="descname">prime_hash</code><a class="headerlink" href="#zaluski.filedatabuffer.ProtoArgs.prime_hash" title="Permalink to this definition">¶</a></dt>
+<dd><p>The hash of the file the computed data “belongs” to.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="zaluski.filedatabuffer.ProtoArgs.prime_path">
+<code class="descname">prime_path</code><a class="headerlink" href="#zaluski.filedatabuffer.ProtoArgs.prime_path" title="Permalink to this definition">¶</a></dt>
+<dd><p>The path where the data from whatever computation these args
+will be used for will be stored.</p>
+</dd></dl>
+
+<dl class="method">
+<dt id="zaluski.filedatabuffer.ProtoArgs.update_paths">
+<code class="descname">update_paths</code><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/zaluski/filedatabuffer.html#ProtoArgs.update_paths"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#zaluski.filedatabuffer.ProtoArgs.update_paths" title="Permalink to this definition">¶</a></dt>
+<dd><p>Make the master FileDataBuffer of this Argument’s
+EncapsulatedFiles aware of the respective associated files’ mtimes and
+hashes.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="function">
+<dt id="zaluski.filedatabuffer.compress_ndarray">
+<code class="descclassname">zaluski.filedatabuffer.</code><code class="descname">compress_ndarray</code><span class="sig-paren">(</span><em>array</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/zaluski/filedatabuffer.html#compress_ndarray"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#zaluski.filedatabuffer.compress_ndarray" title="Permalink to this definition">¶</a></dt>
+<dd><p>Compress a NumPy ndarray into a JSON-serializable object.</p>
+</dd></dl>
+
+<dl class="function">
+<dt id="zaluski.filedatabuffer.compress_pickleable">
+<code class="descclassname">zaluski.filedatabuffer.</code><code class="descname">compress_pickleable</code><span class="sig-paren">(</span><em>o</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/zaluski/filedatabuffer.html#compress_pickleable"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#zaluski.filedatabuffer.compress_pickleable" title="Permalink to this definition">¶</a></dt>
+<dd><p>Compress anything that dill can dump into a JSON-serializable object.</p>
+</dd></dl>
+
+<dl class="function">
+<dt id="zaluski.filedatabuffer.decompress_ndarray">
+<code class="descclassname">zaluski.filedatabuffer.</code><code class="descname">decompress_ndarray</code><span class="sig-paren">(</span><em>compressed_array</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/zaluski/filedatabuffer.html#decompress_ndarray"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#zaluski.filedatabuffer.decompress_ndarray" title="Permalink to this definition">¶</a></dt>
+<dd><p>Recover a NumPy ndarray compressed by compress_ndarray().</p>
+</dd></dl>
+
+<dl class="function">
+<dt id="zaluski.filedatabuffer.decompress_pickleable">
+<code class="descclassname">zaluski.filedatabuffer.</code><code class="descname">decompress_pickleable</code><span class="sig-paren">(</span><em>compressed_o</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/zaluski/filedatabuffer.html#decompress_pickleable"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#zaluski.filedatabuffer.decompress_pickleable" title="Permalink to this definition">¶</a></dt>
+<dd><p>Recover an object compressed by compress_pickleable().</p>
+</dd></dl>
+
+<dl class="function">
+<dt id="zaluski.filedatabuffer.non_cacheable">
+<code class="descclassname">zaluski.filedatabuffer.</code><code class="descname">non_cacheable</code><span class="sig-paren">(</span><em>f</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/zaluski/filedatabuffer.html#non_cacheable"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#zaluski.filedatabuffer.non_cacheable" title="Permalink to this definition">¶</a></dt>
+<dd><p>Sets an attribute on the function that tells FileDataBuffer to not even
+attempt to cache the result of a <a href="#id37"><span class="problematic" id="id38">calculate_</span></a> method, or store it in any way
+(not even in self.data, except temporarily for <a href="#id39"><span class="problematic" id="id40">gather_</span></a> methods).
+&#64;returns_ndarray is redundant with this, because FileDataBuffer doesn’t care
+about the types of non-cached return values. For use with <a href="#id41"><span class="problematic" id="id42">calculate_</span></a> methods
+that return enormous amounts of data and yet are easily computable.</p>
+</dd></dl>
+
+<dl class="function">
+<dt id="zaluski.filedatabuffer.returns_ndarray">
+<code class="descclassname">zaluski.filedatabuffer.</code><code class="descname">returns_ndarray</code><span class="sig-paren">(</span><em>f</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/zaluski/filedatabuffer.html#returns_ndarray"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#zaluski.filedatabuffer.returns_ndarray" title="Permalink to this definition">¶</a></dt>
+<dd><p>Sets an attribute on the function that tells FileDataBuffer to make
+<a href="#id43"><span class="problematic" id="id44">import_</span></a> and <a href="#id45"><span class="problematic" id="id46">export_</span></a> methods for this function that respectively decompress
+and compress the Numpy array it returns. Useless for functions that aren’t
+<a href="#id47"><span class="problematic" id="id48">calculate_</span></a> methods in FileDataBuffer.</p>
+</dd></dl>
+
+<dl class="function">
+<dt id="zaluski.filedatabuffer.returns_pickleable">
+<code class="descclassname">zaluski.filedatabuffer.</code><code class="descname">returns_pickleable</code><span class="sig-paren">(</span><em>f</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/zaluski/filedatabuffer.html#returns_pickleable"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#zaluski.filedatabuffer.returns_pickleable" title="Permalink to this definition">¶</a></dt>
+<dd><p>Sets an attribute on the function that tells FileDataBuffer to make
+<a href="#id49"><span class="problematic" id="id50">import_</span></a> and <a href="#id51"><span class="problematic" id="id52">export_</span></a> methods for this function that respectively decompress
+and compress the pickleable object it returns, using dill. Useless for
+functions that arent <a href="#id53"><span class="problematic" id="id54">calculate_</span></a> methods in FileDataBuffer.</p>
+</dd></dl>
+
+</div>
+<div class="section" id="module-zaluski">
+<span id="module-contents"></span><h2>Module contents<a class="headerlink" href="#module-zaluski" title="Permalink to this headline">¶</a></h2>
+<p>Provides an object, FileDataBuffer, that robustly turns the costly
+computation of derived properties of files into essentially a key-value store,
+caching them in the process.</p>
+<dl class="function">
+<dt id="zaluski.returns_ndarray">
+<code class="descclassname">zaluski.</code><code class="descname">returns_ndarray</code><span class="sig-paren">(</span><em>f</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/zaluski/filedatabuffer.html#returns_ndarray"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#zaluski.returns_ndarray" title="Permalink to this definition">¶</a></dt>
+<dd><p>Sets an attribute on the function that tells FileDataBuffer to make
+<a href="#id55"><span class="problematic" id="id56">import_</span></a> and <a href="#id57"><span class="problematic" id="id58">export_</span></a> methods for this function that respectively decompress
+and compress the Numpy array it returns. Useless for functions that aren’t
+<a href="#id59"><span class="problematic" id="id60">calculate_</span></a> methods in FileDataBuffer.</p>
+</dd></dl>
+
+<dl class="function">
+<dt id="zaluski.returns_pickleable">
+<code class="descclassname">zaluski.</code><code class="descname">returns_pickleable</code><span class="sig-paren">(</span><em>f</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/zaluski/filedatabuffer.html#returns_pickleable"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#zaluski.returns_pickleable" title="Permalink to this definition">¶</a></dt>
+<dd><p>Sets an attribute on the function that tells FileDataBuffer to make
+<a href="#id61"><span class="problematic" id="id62">import_</span></a> and <a href="#id63"><span class="problematic" id="id64">export_</span></a> methods for this function that respectively decompress
+and compress the pickleable object it returns, using dill. Useless for
+functions that arent <a href="#id65"><span class="problematic" id="id66">calculate_</span></a> methods in FileDataBuffer.</p>
+</dd></dl>
+
+<dl class="function">
+<dt id="zaluski.non_cacheable">
+<code class="descclassname">zaluski.</code><code class="descname">non_cacheable</code><span class="sig-paren">(</span><em>f</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/zaluski/filedatabuffer.html#non_cacheable"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#zaluski.non_cacheable" title="Permalink to this definition">¶</a></dt>
+<dd><p>Sets an attribute on the function that tells FileDataBuffer to not even
+attempt to cache the result of a <a href="#id67"><span class="problematic" id="id68">calculate_</span></a> method, or store it in any way
+(not even in self.data, except temporarily for <a href="#id69"><span class="problematic" id="id70">gather_</span></a> methods).
+&#64;returns_ndarray is redundant with this, because FileDataBuffer doesn’t care
+about the types of non-cached return values. For use with <a href="#id71"><span class="problematic" id="id72">calculate_</span></a> methods
+that return enormous amounts of data and yet are easily computable.</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="zaluski.FileDataBuffer">
+<em class="property">class </em><code class="descclassname">zaluski.</code><code class="descname">FileDataBuffer</code><a class="reference internal" href="../_modules/zaluski/filedatabuffer.html#FileDataBuffer"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#zaluski.FileDataBuffer" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Singleton class that stores information about files, to be used as a data
+buffer. Its purpose is to intelligently abstract the retrieval of
+information about files in such a way that the information is cached and/or
+buffered in the process. The only methods in it that should ideally be used
+externally are the data retrieval methods, and out of those ideally just the
+caching ones (currently <a href="#id73"><span class="problematic" id="id74">get_</span></a> and <a href="#id75"><span class="problematic" id="id76">gather_</span></a> methods). In practice,
+update_caches() is also used externally to force a cache update.</p>
+<p>Internally, it holds a data dict, which indexes all the data first by the
+MD5 hash of the contents of the file that produced the data, then the type
+of data it is (e.g. RMSD or score), and finally the parameters that
+produced the data (like the particular weights on the scorefunction for a
+score). It also holds a dict of paths to files, the contents hashes of these
+files, and the mtime of the file at which the contents hash was produced, so
+that if it is asked about a file whose hash is already known, it does not
+need to recalculate it. Finally, it also holds a dict mapping the caches
+it’s already loaded to their mtimes at which they were loaded, so that it
+does not load a cache unless it’s changed.</p>
+<p>On disk, the data is cached in a .zaluski_cache file that contains a JSON
+array of the data dict and the file paths dict, each with only the entries
+for the file files in the same folder as the cache. If caching is turned on,
+whenever the buffer generates data for a file, it will check whether the
+file’s folder has a cache with that data yet, and if not, it will write one
+(making sure to load any cached data in that folder that already exists).
+Caching is done in a thread-safe manner, with file locks. Throughout the
+reading, updating, and writing of a cache, the buffer will maintain an
+exclusive lock on the cache, so that it doesn’t get updated on disk in
+between its reading and updating/writing, which would cause the first
+update to get lost.</p>
+<p>The ability to get a particular type of data is added to the buffer by
+defining a <a href="#id77"><span class="problematic" id="id78">calculate_</span></a> method. Corresponding <a href="#id79"><span class="problematic" id="id80">get_</span></a> and <a href="#id81"><span class="problematic" id="id82">gather_</span></a> methods are
+created dynamically at initialization, which add caching to the <a href="#id83"><span class="problematic" id="id84">calculate_</span></a>
+method, and in the case of <a href="#id85"><span class="problematic" id="id86">gather_</span></a>, concurrently operate on lists given for
+arguments that normally don’t take them. Because PDB hashes are used as the
+top-level keys in the data dict, each <a href="#id87"><span class="problematic" id="id88">calculate_</span></a> method should take at
+least one PDB, either as a stream or a path. See the comment above the
+<a href="#id89"><span class="problematic" id="id90">calculate_</span></a> methods for more details.</p>
+<p>The internal settings calculatingp and plottingp work like this:</p>
+<blockquote>
+<div><ul class="simple">
+<li><dl class="first docutils">
+<dt>calculatingp = False: The buffer will only retrieve cached information,</dt>
+<dd>never calculating its own data or saving caches. <a href="#id91"><span class="problematic" id="id92">get_</span></a> operations will
+return a KeyError if the data for a file is not in the caches it’s
+loaded, and <a href="#id93"><span class="problematic" id="id94">gather_</span></a> operations will leave a file’s data out of the
+list they return if they can’t find it.</dd>
+</dl>
+</li>
+<li><dl class="first docutils">
+<dt>calculatingp = True, cachingp = False: The buffer will calculate new</dt>
+<dd>information if it doesn’t have it, but never save it. Useful if
+real-time caching is taking too much time, and if instead you want to
+do it manually by calling update_caches(force=True) at select times.
+Note that with cachingp = False, update_caches() doesn’t do anything
+unless you call it with force=True. (This is the case with
+calculatingp = False as well, making it the only real effect of
+cachingp in that case.)</dd>
+</dl>
+</li>
+<li><dl class="first docutils">
+<dt>calculatingp = True, cachingp = True: The buffer will calculate new</dt>
+<dd>information if it doesn’t have it, and save it to disk immediately
+all of the time.</dd>
+</dl>
+</li>
+</ul>
+</div></blockquote>
+<p>The structure of the buffer’s data variables, although summarized above,
+can be stated more succinctly as:</p>
+<p>self.data:
+{ content_key : { data_function_name :</p>
+<blockquote>
+<div>{ data_function_params_tuple : data } } }</div></blockquote>
+<p>self.file_paths:
+{ file_path : { ‘mtime’ : mtime_at_last_hashing,</p>
+<blockquote>
+<div>‘hash’  : contents_hash } }</div></blockquote>
+<p>self.cache_paths:
+{ cache_file_dir_path : mtime_at_last_access }</p>
+<dl class="method">
+<dt id="zaluski.FileDataBuffer.retrieve_data_from_cache">
+<code class="descname">retrieve_data_from_cache</code><span class="sig-paren">(</span><em>dirpath</em>, <em>_update_caches_fd=None</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/zaluski/filedatabuffer.html#FileDataBuffer.retrieve_data_from_cache"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#zaluski.FileDataBuffer.retrieve_data_from_cache" title="Permalink to this definition">¶</a></dt>
+<dd><p>Retrieves data from a cache file of a directory. The data in the file
+is a JSON of a data dict and a file_paths list of a FileDataBuffer,
+except instead of file paths, it has just filenames.</p>
+</dd></dl>
+
+<dl class="method">
+<dt id="zaluski.FileDataBuffer.update_caches">
+<code class="descname">update_caches</code><span class="sig-paren">(</span><em>force=False</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/zaluski/filedatabuffer.html#FileDataBuffer.update_caches"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#zaluski.FileDataBuffer.update_caches" title="Permalink to this definition">¶</a></dt>
+<dd><p>Updates the caches for every directory the cache knows about. This
+method is thread-safe.</p>
+</dd></dl>
+
+</dd></dl>
+
+</div>
+</div>
+
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+  <h3><a href="../index.html">Table Of Contents</a></h3>
+  <ul>
+<li><a class="reference internal" href="#">zaluski package</a><ul>
+<li><a class="reference internal" href="#submodules">Submodules</a></li>
+<li><a class="reference internal" href="#module-zaluski.filedatabuffer">zaluski.filedatabuffer module</a></li>
+<li><a class="reference internal" href="#module-zaluski">Module contents</a></li>
+</ul>
+</li>
+</ul>
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../index.html">Documentation overview</a><ul>
+  </ul></li>
+</ul>
+</div>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../_sources/api/zaluski.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    </div>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2018, Michael Szegedy.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 1.7.4</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.10</a>
+      
+      |
+      <a href="../_sources/api/zaluski.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

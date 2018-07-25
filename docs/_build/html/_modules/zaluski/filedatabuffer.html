@@ -1,0 +1,930 @@
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>zaluski.filedatabuffer &#8212; zaluski  documentation</title>
+    <link rel="stylesheet" href="../../_static/alabaster.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    <script type="text/javascript" src="../../_static/documentation_options.js"></script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+   
+  <link rel="stylesheet" href="../../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for zaluski.filedatabuffer</h1><div class="highlight"><pre>
+<span></span><span class="c1"># zaluski/filedatabuffer.py</span>
+<span class="c1"># by Michael Szegedy, 2018</span>
+<span class="c1">#</span>
+<span class="c1"># This program is free software: you can redistribute it and/or modify</span>
+<span class="c1"># it under the terms of the GNU General Public License as published by</span>
+<span class="c1"># the Free Software Foundation, either version 3 of the License, or</span>
+<span class="c1"># (at your option) any later version.</span>
+<span class="c1">#</span>
+<span class="c1"># This program is distributed in the hope that it will be useful,</span>
+<span class="c1"># but WITHOUT ANY WARRANTY; without even the implied warranty of</span>
+<span class="c1"># MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the</span>
+<span class="c1"># GNU General Public License for more details.</span>
+<span class="c1">#</span>
+<span class="c1"># You should have received a copy of the GNU General Public License</span>
+<span class="c1"># along with this program.  If not, see &lt;https://www.gnu.org/licenses/&gt;.</span>
+
+<span class="sd">&#39;&#39;&#39;Provides an object, FileDataBuffer, that robustly turns the costly</span>
+<span class="sd">computation of derived properties of files into essentially a key-value store,</span>
+<span class="sd">caching them in the process.&#39;&#39;&#39;</span>
+
+<span class="c1">### Imports</span>
+<span class="c1"># pylint: disable=import-error</span>
+<span class="c1"># pylint: disable=multiple-imports</span>
+
+<span class="c1">## Python Standard Library</span>
+<span class="kn">import</span> <span class="nn">re</span>
+<span class="kn">import</span> <span class="nn">types</span><span class="o">,</span> <span class="nn">copy</span><span class="o">,</span> <span class="nn">enum</span>
+<span class="kn">import</span> <span class="nn">itertools</span>
+<span class="kn">import</span> <span class="nn">zlib</span>
+<span class="kn">import</span> <span class="nn">hashlib</span>
+<span class="kn">import</span> <span class="nn">os</span><span class="o">,</span> <span class="nn">io</span><span class="o">,</span> <span class="nn">time</span>
+<span class="kn">import</span> <span class="nn">json</span><span class="o">,</span> <span class="nn">base64</span>
+<span class="kn">import</span> <span class="nn">warnings</span><span class="o">,</span> <span class="nn">inspect</span>
+<span class="kn">import</span> <span class="nn">fcntl</span>
+<span class="kn">from</span> <span class="nn">functools</span> <span class="k">import</span> <span class="n">reduce</span>
+
+<span class="c1">## Other stuff</span>
+<span class="kn">import</span> <span class="nn">sortedcontainers</span>
+<span class="kn">import</span> <span class="nn">dill</span>
+<span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+<span class="kn">from</span> <span class="nn">mpi4py</span> <span class="k">import</span> <span class="n">MPI</span>
+
+<span class="c1">### Constants</span>
+
+<span class="n">DEBUG</span> <span class="o">=</span> <span class="kc">False</span>
+<span class="n">VERSION</span> <span class="o">=</span> <span class="s1">&#39;0.2.0&#39;</span>
+<span class="n">CACHE_NAME</span> <span class="o">=</span> <span class="s1">&#39;.zaluski_cache&#39;</span>
+
+<span class="n">MPICOMM</span> <span class="o">=</span> <span class="n">MPI</span><span class="o">.</span><span class="n">COMM_WORLD</span>
+<span class="n">MPIRANK</span> <span class="o">=</span> <span class="n">MPICOMM</span><span class="o">.</span><span class="n">Get_rank</span><span class="p">()</span>
+<span class="n">MPISIZE</span> <span class="o">=</span> <span class="n">MPICOMM</span><span class="o">.</span><span class="n">Get_size</span><span class="p">()</span>
+<span class="n">MPISTATUS</span> <span class="o">=</span> <span class="n">MPI</span><span class="o">.</span><span class="n">Status</span><span class="p">()</span>
+<span class="n">MPI</span><span class="o">.</span><span class="n">pickle</span> <span class="o">=</span> <span class="n">dill</span> <span class="c1"># upgrade</span>
+
+<span class="c1">### Debug functions</span>
+
+<span class="k">def</span> <span class="nf">_DEBUG_OUT</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Print something, but only if DEBUG is True. Also, always flush output.&#39;&#39;&#39;</span>
+    <span class="k">if</span> <span class="n">DEBUG</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;DEBUG: &#39;</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s1">&#39;&#39;</span><span class="p">)</span>
+        <span class="n">kwargs</span><span class="p">[</span><span class="s1">&#39;flush&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="nb">print</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">args</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">except</span> <span class="ne">IndexError</span><span class="p">:</span>
+        <span class="k">pass</span>
+<span class="n">_DEBUG_OUT</span><span class="p">(</span><span class="s1">&#39;Debug is on.&#39;</span><span class="p">)</span>
+
+<span class="c1">### Decorators</span>
+
+<div class="viewcode-block" id="returns_ndarray"><a class="viewcode-back" href="../../api/zaluski.html#zaluski.filedatabuffer.returns_ndarray">[docs]</a><span class="k">def</span> <span class="nf">returns_ndarray</span><span class="p">(</span><span class="n">f</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Sets an attribute on the function that tells FileDataBuffer to make</span>
+<span class="sd">    import_ and export_ methods for this function that respectively decompress</span>
+<span class="sd">    and compress the Numpy array it returns. Useless for functions that aren&#39;t</span>
+<span class="sd">    calculate_ methods in FileDataBuffer.&#39;&#39;&#39;</span>
+    <span class="n">f</span><span class="o">.</span><span class="n">returns_ndarray</span> <span class="o">=</span> <span class="kc">True</span>
+    <span class="k">return</span> <span class="n">f</span></div>
+
+<div class="viewcode-block" id="returns_pickleable"><a class="viewcode-back" href="../../api/zaluski.html#zaluski.filedatabuffer.returns_pickleable">[docs]</a><span class="k">def</span> <span class="nf">returns_pickleable</span><span class="p">(</span><span class="n">f</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Sets an attribute on the function that tells FileDataBuffer to make</span>
+<span class="sd">    import_ and export_ methods for this function that respectively decompress</span>
+<span class="sd">    and compress the pickleable object it returns, using dill. Useless for</span>
+<span class="sd">    functions that arent calculate_ methods in FileDataBuffer.&#39;&#39;&#39;</span>
+    <span class="n">f</span><span class="o">.</span><span class="n">returns_pickleable</span> <span class="o">=</span> <span class="kc">True</span>
+    <span class="k">return</span> <span class="n">f</span></div>
+
+<div class="viewcode-block" id="non_cacheable"><a class="viewcode-back" href="../../api/zaluski.html#zaluski.filedatabuffer.non_cacheable">[docs]</a><span class="k">def</span> <span class="nf">non_cacheable</span><span class="p">(</span><span class="n">f</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Sets an attribute on the function that tells FileDataBuffer to not even</span>
+<span class="sd">    attempt to cache the result of a calculate_ method, or store it in any way</span>
+<span class="sd">    (not even in self.data, except temporarily for gather_ methods).</span>
+<span class="sd">    @returns_ndarray is redundant with this, because FileDataBuffer doesn&#39;t care</span>
+<span class="sd">    about the types of non-cached return values. For use with calculate_ methods</span>
+<span class="sd">    that return enormous amounts of data and yet are easily computable.&#39;&#39;&#39;</span>
+    <span class="n">f</span><span class="o">.</span><span class="n">non_cacheable</span> <span class="o">=</span> <span class="kc">True</span>
+    <span class="k">return</span> <span class="n">f</span></div>
+
+<span class="c1">### Special compress/decompress functions</span>
+
+<div class="viewcode-block" id="compress_ndarray"><a class="viewcode-back" href="../../api/zaluski.html#zaluski.filedatabuffer.compress_ndarray">[docs]</a><span class="k">def</span> <span class="nf">compress_ndarray</span><span class="p">(</span><span class="n">array</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Compress a NumPy ndarray into a JSON-serializable object.&#39;&#39;&#39;</span>
+    <span class="c1"># Final form is:</span>
+    <span class="c1"># [bunch of bits as Base 85-encoded string,</span>
+    <span class="c1">#  tuple containing matrix side lengths]</span>
+    <span class="c1"># this 7 is the compression level --------------------- V</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">base64</span><span class="o">.</span><span class="n">b85encode</span><span class="p">(</span><span class="n">zlib</span><span class="o">.</span><span class="n">compress</span><span class="p">(</span><span class="n">array</span><span class="o">.</span><span class="n">tobytes</span><span class="p">(),</span> <span class="mi">7</span><span class="p">))</span>
+                  <span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">encoding</span><span class="o">=</span><span class="s1">&#39;utf-8&#39;</span><span class="p">),</span>
+            <span class="n">array</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span>
+            <span class="nb">str</span><span class="p">(</span><span class="n">array</span><span class="o">.</span><span class="n">dtype</span><span class="p">)]</span></div>
+
+<div class="viewcode-block" id="decompress_ndarray"><a class="viewcode-back" href="../../api/zaluski.html#zaluski.filedatabuffer.decompress_ndarray">[docs]</a><span class="k">def</span> <span class="nf">decompress_ndarray</span><span class="p">(</span><span class="n">compressed_array</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Recover a NumPy ndarray compressed by compress_ndarray().&#39;&#39;&#39;</span>
+    <span class="n">data</span><span class="p">,</span> <span class="n">shape</span><span class="p">,</span> <span class="n">dtype</span> <span class="o">=</span> <span class="n">compressed_array</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">frombuffer</span><span class="p">(</span>
+            <span class="n">zlib</span><span class="o">.</span><span class="n">decompress</span><span class="p">(</span>
+                <span class="n">base64</span><span class="o">.</span><span class="n">b85decode</span><span class="p">(</span>
+                    <span class="n">data</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">encoding</span><span class="o">=</span><span class="s1">&#39;utf-8&#39;</span><span class="p">))),</span>
+            <span class="n">np</span><span class="o">.</span><span class="n">dtype</span><span class="p">(</span><span class="n">dtype</span><span class="p">))[:</span><span class="n">reduce</span><span class="p">(</span><span class="k">lambda</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="n">x</span><span class="o">*</span><span class="n">y</span><span class="p">,</span> <span class="n">shape</span><span class="p">)],</span>
+        <span class="n">shape</span><span class="p">)</span></div>
+
+<div class="viewcode-block" id="compress_pickleable"><a class="viewcode-back" href="../../api/zaluski.html#zaluski.filedatabuffer.compress_pickleable">[docs]</a><span class="k">def</span> <span class="nf">compress_pickleable</span><span class="p">(</span><span class="n">o</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Compress anything that dill can dump into a JSON-serializable object.&#39;&#39;&#39;</span>
+    <span class="c1"># Converts to a Base 85-encoded string</span>
+    <span class="k">return</span> <span class="n">base64</span><span class="o">.</span><span class="n">b85encode</span><span class="p">(</span><span class="n">dill</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">o</span><span class="p">))</span></div>
+
+<div class="viewcode-block" id="decompress_pickleable"><a class="viewcode-back" href="../../api/zaluski.html#zaluski.filedatabuffer.decompress_pickleable">[docs]</a><span class="k">def</span> <span class="nf">decompress_pickleable</span><span class="p">(</span><span class="n">compressed_o</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Recover an object compressed by compress_pickleable().&#39;&#39;&#39;</span>
+    <span class="k">return</span> <span class="n">dill</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">base64</span><span class="o">.</span><span class="n">b85decode</span><span class="p">(</span><span class="n">compressed_o</span><span class="p">))</span></div>
+
+<span class="c1">### Helper classes</span>
+
+<div class="viewcode-block" id="Argument"><a class="viewcode-back" href="../../api/zaluski.html#zaluski.filedatabuffer.Argument">[docs]</a><span class="k">class</span> <span class="nc">Argument</span><span class="p">:</span>
+    <span class="sd">&#39;&#39;&#39;The object that ProtoArgs uses to represent a single argument.&#39;&#39;&#39;</span>
+    <span class="n">NAME_MATCHER</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;(.*_)?&#39;</span>
+                              <span class="sa">r</span><span class="s1">&#39;(path|stream)&#39;</span>
+                              <span class="sa">r</span><span class="s1">&#39;(_list|_set|)&#39;</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">encapsulate</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+        <span class="k">if</span> <span class="n">name</span> <span class="o">==</span> <span class="s1">&#39;params&#39;</span><span class="p">:</span>
+            <span class="n">matches</span> <span class="o">=</span> <span class="n">Argument</span><span class="o">.</span><span class="n">NAME_MATCHER</span><span class="o">.</span><span class="n">fullmatch</span><span class="p">(</span><span class="s1">&#39;path_set&#39;</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">matches</span> <span class="o">=</span> <span class="n">Argument</span><span class="o">.</span><span class="n">NAME_MATCHER</span><span class="o">.</span><span class="n">fullmatch</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+        <span class="k">if</span> <span class="kc">None</span> <span class="ow">in</span> <span class="p">(</span><span class="n">matches</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">value</span>          <span class="o">=</span> <span class="n">value</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">base_type</span>      <span class="o">=</span> <span class="s1">&#39;misc&#39;</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">container_type</span> <span class="o">=</span> <span class="s1">&#39;&#39;</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">base_type</span>      <span class="o">=</span> <span class="n">matches</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">container_type</span> <span class="o">=</span> <span class="n">matches</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span><span class="o">.</span><span class="n">lstrip</span><span class="p">(</span><span class="s1">&#39;_&#39;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">container_type</span> <span class="o">==</span> <span class="s1">&#39;&#39;</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">value</span> <span class="o">=</span> <span class="n">encapsulate</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">value</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">value</span><span class="p">)(</span><span class="n">encapsulate</span><span class="p">(</span><span class="n">path</span><span class="p">)</span> <span class="k">for</span> <span class="n">path</span> <span class="ow">in</span> <span class="n">value</span><span class="p">)</span>
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">accessor_items</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Items to add to the accessor tuple for this argument.&#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">base_type</span> <span class="o">==</span> <span class="s1">&#39;misc&#39;</span><span class="p">:</span>
+            <span class="k">yield</span> <span class="bp">self</span><span class="o">.</span><span class="n">value</span>
+            <span class="k">return</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">container_type</span> <span class="o">==</span> <span class="s1">&#39;&#39;</span><span class="p">:</span>
+            <span class="k">yield</span> <span class="bp">self</span><span class="o">.</span><span class="n">value</span><span class="o">.</span><span class="n">hash</span>
+            <span class="k">return</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">container_type</span> <span class="o">==</span> <span class="s1">&#39;list&#39;</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">value</span><span class="p">:</span>
+                <span class="k">yield</span> <span class="n">f</span><span class="o">.</span><span class="n">hash</span>
+            <span class="k">return</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">container_type</span> <span class="o">==</span> <span class="s1">&#39;set&#39;</span><span class="p">:</span>
+            <span class="c1"># sorted by hash (see EncapsulatedFile)</span>
+            <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">sortedcontainers</span><span class="o">.</span><span class="n">SortedSet</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">value</span><span class="p">):</span>
+                <span class="k">yield</span> <span class="n">f</span><span class="o">.</span><span class="n">hash</span>
+            <span class="k">return</span>
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">encapsulated_files</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Encapsulated files to add to self_.encapsulated_files for this</span>
+<span class="sd">        argument.&#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">base_type</span> <span class="o">==</span> <span class="s1">&#39;misc&#39;</span><span class="p">:</span>
+            <span class="k">return</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">container_type</span> <span class="o">==</span> <span class="s1">&#39;&#39;</span><span class="p">:</span>
+            <span class="k">yield</span> <span class="bp">self</span><span class="o">.</span><span class="n">value</span>
+            <span class="k">return</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">container_type</span> <span class="o">==</span> <span class="s1">&#39;list&#39;</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">value</span><span class="p">:</span>
+                <span class="k">yield</span> <span class="n">f</span>
+            <span class="k">return</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">container_type</span> <span class="o">==</span> <span class="s1">&#39;set&#39;</span><span class="p">:</span>
+            <span class="c1"># sorted by hash (see EncapsulatedFile)</span>
+            <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">sortedcontainers</span><span class="o">.</span><span class="n">SortedSet</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">value</span><span class="p">):</span>
+                <span class="k">yield</span> <span class="n">f</span>
+            <span class="k">return</span>
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">calcvalue</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Value of arg for calling calculate_ with.&#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">base_type</span> <span class="o">==</span> <span class="s1">&#39;misc&#39;</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">value</span>
+        <span class="n">accessing_fn</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;path&#39;</span><span class="p">:</span>   <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="o">.</span><span class="n">path</span><span class="p">,</span>
+                        <span class="s1">&#39;stream&#39;</span><span class="p">:</span> <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="o">.</span><span class="n">stream</span><span class="p">,</span>
+                       <span class="p">}[</span><span class="bp">self</span><span class="o">.</span><span class="n">base_type</span><span class="p">]</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">container_type</span> <span class="o">==</span> <span class="s1">&#39;&#39;</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">accessing_fn</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+        <span class="k">return</span> <span class="nb">type</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">value</span><span class="p">)(</span><span class="n">accessing_fn</span><span class="p">(</span><span class="n">f</span><span class="p">)</span> \
+                                <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">value</span><span class="p">)</span></div>
+
+<div class="viewcode-block" id="ProtoArgs"><a class="viewcode-back" href="../../api/zaluski.html#zaluski.filedatabuffer.ProtoArgs">[docs]</a><span class="k">class</span> <span class="nc">ProtoArgs</span><span class="p">():</span>
+    <span class="sd">&#39;&#39;&#39;An object that get_ and gather_ methods use to construct arguments to</span>
+<span class="sd">    call their associated calculate_ methods with. More information under</span>
+<span class="sd">    FileDataBuffer._proto_args().&#39;&#39;&#39;</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">calcfxn</span><span class="p">,</span> <span class="n">encapsulate</span><span class="p">,</span> <span class="n">args</span><span class="p">,</span> <span class="n">kwargs</span><span class="p">):</span>
+        <span class="c1"># index of each argument (with number indices for positional</span>
+        <span class="c1"># arguments, but string indices for keyword arguments); needed</span>
+        <span class="c1"># to provide iteration (unused)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">indices</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="c1"># positional args and their characteristics; accessed through</span>
+        <span class="c1"># property .args</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_args</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="c1"># keyword args and their characteristics; accessed through</span>
+        <span class="c1"># property .kwargs</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_kwargs</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="c1"># list of encapsulated files for file-type args; needed to</span>
+        <span class="c1"># generate the three properties .paths, .prime_path, and</span>
+        <span class="c1"># .prime_hash</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">encapsulated_files</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="c1"># the string that can be used as a key to index into the parent</span>
+        <span class="c1"># FileDataBuffer&#39;s .data dict to retrieve the information</span>
+        <span class="c1"># stored by this computation:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">accessor_string</span> <span class="o">=</span> <span class="s1">&#39;&#39;</span>
+        <span class="n">argspec</span> <span class="o">=</span> <span class="n">inspect</span><span class="o">.</span><span class="n">getfullargspec</span><span class="p">(</span><span class="n">calcfxn</span><span class="p">)</span>
+        <span class="n">accessor_list</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">lendefaults</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">argspec</span><span class="o">.</span><span class="n">defaults</span><span class="p">)</span> \
+                      <span class="k">if</span> <span class="n">argspec</span><span class="o">.</span><span class="n">defaults</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> \
+                      <span class="k">else</span> <span class="mi">0</span>
+        <span class="c1"># start from 1 because we skip over self</span>
+        <span class="k">if</span> <span class="n">lendefaults</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">positargs</span> <span class="o">=</span> <span class="n">argspec</span><span class="o">.</span><span class="n">args</span><span class="p">[</span><span class="mi">1</span><span class="p">:</span><span class="o">-</span><span class="n">lendefaults</span><span class="p">]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">positargs</span> <span class="o">=</span> <span class="n">argspec</span><span class="o">.</span><span class="n">args</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span>
+        <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">arg_name</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">positargs</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">indices</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>
+            <span class="n">arg</span> <span class="o">=</span> <span class="n">Argument</span><span class="p">(</span><span class="n">arg_name</span><span class="p">,</span> <span class="n">args</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">encapsulate</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_args</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">arg</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">encapsulated_files</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">arg</span><span class="o">.</span><span class="n">encapsulated_files</span><span class="p">)</span>
+            <span class="n">accessor_list</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">arg</span><span class="o">.</span><span class="n">accessor_items</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">lendefaults</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">namedargs</span> <span class="o">=</span> <span class="p">(</span><span class="n">argspec</span><span class="o">.</span><span class="n">args</span><span class="p">[</span><span class="o">-</span><span class="n">lendefaults</span><span class="p">:]</span> <span class="o">+</span> \
+                         <span class="n">argspec</span><span class="o">.</span><span class="n">kwonlyargs</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">namedargs</span> <span class="o">=</span> <span class="n">argspec</span><span class="o">.</span><span class="n">kwonlyargs</span>
+        <span class="n">namedargs</span> <span class="o">=</span> <span class="p">(</span><span class="n">kwarg</span> <span class="k">for</span> <span class="n">kwarg</span> <span class="ow">in</span> <span class="n">namedargs</span> \
+                     <span class="k">if</span> <span class="n">kwarg</span> <span class="ow">in</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+        <span class="k">for</span> <span class="n">kwarg_name</span> <span class="ow">in</span> <span class="n">namedargs</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">indices</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">kwarg_name</span><span class="p">)</span>
+            <span class="n">arg</span> <span class="o">=</span> <span class="n">Argument</span><span class="p">(</span><span class="n">kwarg_name</span><span class="p">,</span> <span class="n">kwargs</span><span class="p">[</span><span class="n">kwarg_name</span><span class="p">],</span> <span class="n">encapsulate</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_kwargs</span><span class="p">[</span><span class="n">kwarg_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">arg</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">encapsulated_files</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">arg</span><span class="o">.</span><span class="n">encapsulated_files</span><span class="p">)</span>
+            <span class="n">accessor_list</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">arg</span><span class="o">.</span><span class="n">accessor_items</span><span class="p">)</span>
+        <span class="n">accessor_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">VERSION</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">accessor_string</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="nb">tuple</span><span class="p">(</span><span class="n">accessor_list</span><span class="p">))</span>
+    <span class="k">def</span> <span class="nf">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">index</span><span class="p">):</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">index</span><span class="p">,</span> <span class="nb">int</span><span class="p">):</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">args</span><span class="p">[</span><span class="n">index</span><span class="p">]</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">kwargs</span><span class="p">[</span><span class="n">index</span><span class="p">]</span>
+    <span class="k">def</span> <span class="nf">__iter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">nargs</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">args</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">itertools</span><span class="o">.</span><span class="n">chain</span><span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">args</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">nargs</span><span class="p">)),</span>
+                               <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">kwargs</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> \
+                                <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">indices</span><span class="p">[</span><span class="n">nargs</span><span class="p">:]))</span>
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">args</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;This ProtoArgs&#39;s represented positional args.&#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">arg</span><span class="o">.</span><span class="n">value</span> <span class="k">for</span> <span class="n">arg</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_args</span><span class="p">]</span>
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">kwargs</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;This ProtoArgs&#39;s represented keyword args.&#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="p">{</span><span class="n">name</span><span class="p">:</span> <span class="n">arg</span><span class="o">.</span><span class="n">value</span> <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">arg</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_kwargs</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">paths</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Paths of encapsulated files. Needed by parent FileDataBuffer</span>
+<span class="sd">        to know where to retrieve caches from before computation is</span>
+<span class="sd">        performed, and where to update them afterwards. Also forms basis</span>
+<span class="sd">        of .prime_path.&#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">encapsulated</span><span class="o">.</span><span class="n">path</span> \
+                <span class="k">for</span> <span class="n">encapsulated</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">encapsulated_files</span><span class="p">]</span>
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">hashes</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Unused, except for defining .prime_hash. For symmetry with</span>
+<span class="sd">        .paths.&#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">encapsulated</span><span class="o">.</span><span class="n">hash</span> \
+                <span class="k">for</span> <span class="n">encapsulated</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">encapsulated_files</span><span class="p">]</span>
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">prime_path</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;The path where the data from whatever computation these args</span>
+<span class="sd">        will be used for will be stored.&#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">paths</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">prime_hash</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;The hash of the file the computed data &quot;belongs&quot; to.&#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">hashes</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">calcargs</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;The positional arguments used for a calculate_ call.&#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">arg</span><span class="o">.</span><span class="n">calcvalue</span> <span class="k">for</span> <span class="n">arg</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_args</span><span class="p">]</span>
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">calckwargs</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;The keyword arguments used for a calculate_ call.&#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="p">{</span><span class="n">name</span><span class="p">:</span> <span class="n">arg</span><span class="o">.</span><span class="n">calcvalue</span> \
+                <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">arg</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_kwargs</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+<div class="viewcode-block" id="ProtoArgs.update_paths"><a class="viewcode-back" href="../../api/zaluski.html#zaluski.filedatabuffer.ProtoArgs.update_paths">[docs]</a>    <span class="k">def</span> <span class="nf">update_paths</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Make the master FileDataBuffer of this Argument&#39;s</span>
+<span class="sd">        EncapsulatedFiles aware of the respective associated files&#39; mtimes and</span>
+<span class="sd">        hashes.&#39;&#39;&#39;</span>
+        <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">encapsulated_files</span><span class="p">:</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">update_file_paths_dict</span><span class="p">()</span></div></div>
+
+<div class="viewcode-block" id="EncapsulatedFile"><a class="viewcode-back" href="../../api/zaluski.html#zaluski.filedatabuffer.EncapsulatedFile">[docs]</a><span class="k">class</span> <span class="nc">EncapsulatedFile</span><span class="p">:</span>
+    <span class="sd">&#39;&#39;&#39;The class responsible for handling access to the paths that are passed to</span>
+<span class="sd">    a FileDataBuffer, and for keeping track of when they change.&#39;&#39;&#39;</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">file_paths_dict</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">path</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">path</span> <span class="o">=</span> <span class="kc">None</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">file_path_dict</span> <span class="o">=</span> <span class="p">{}</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">mtime</span> <span class="o">=</span> <span class="mi">0</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">hash</span> <span class="o">=</span> <span class="s1">&#39;-1&#39;</span> <span class="c1"># needs to be an integer for comparisons</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_stream</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">file_paths_dict</span> <span class="o">=</span> <span class="n">file_paths_dict</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">mtime</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">file_paths_dict</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s1">&#39;mtime&#39;</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">hash</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">file_paths_dict</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s1">&#39;hash&#39;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_stream</span> <span class="o">=</span> <span class="kc">None</span>
+            <span class="n">diskmtime</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">getmtime</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">path</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">diskmtime</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">mtime</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">hash</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">diskmtime</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">__lt__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">__compare</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="k">lambda</span> <span class="n">s</span><span class="p">,</span> <span class="n">o</span><span class="p">:</span> <span class="n">s</span> <span class="o">&lt;</span> <span class="n">o</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">__le__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">__compare</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="k">lambda</span> <span class="n">s</span><span class="p">,</span> <span class="n">o</span><span class="p">:</span> <span class="n">s</span> <span class="o">&lt;=</span> <span class="n">o</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">__eq__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">__compare</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="k">lambda</span> <span class="n">s</span><span class="p">,</span> <span class="n">o</span><span class="p">:</span> <span class="n">s</span> <span class="o">==</span> <span class="n">o</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">__ge__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">__compare</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="k">lambda</span> <span class="n">s</span><span class="p">,</span> <span class="n">o</span><span class="p">:</span> <span class="n">s</span> <span class="o">&gt;=</span> <span class="n">o</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">__gt__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">__compare</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="k">lambda</span> <span class="n">s</span><span class="p">,</span> <span class="n">o</span><span class="p">:</span> <span class="n">s</span> <span class="o">&gt;</span> <span class="n">o</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">__ne__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">__compare</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="k">lambda</span> <span class="n">s</span><span class="p">,</span> <span class="n">o</span><span class="p">:</span> <span class="n">s</span> <span class="o">!=</span> <span class="n">o</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">__hash__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">hash</span><span class="p">,</span> <span class="mi">16</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">__compare</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">,</span> <span class="n">method</span><span class="p">):</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">method</span><span class="p">(</span><span class="nb">hash</span><span class="p">(</span><span class="bp">self</span><span class="p">),</span> <span class="nb">hash</span><span class="p">(</span><span class="n">other</span><span class="p">))</span>
+        <span class="k">except</span> <span class="p">(</span><span class="ne">AttributeError</span><span class="p">,</span> <span class="ne">TypeError</span><span class="p">):</span>
+            <span class="k">return</span> <span class="bp">NotImplemented</span>
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">stream</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">mtime</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s1">&#39;ascii&#39;</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Stream view of associated file.&#39;&#39;&#39;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">mtime</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stream</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+        <span class="k">return</span> <span class="n">io</span><span class="o">.</span><span class="n">StringIO</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_stream</span>
+                               <span class="o">.</span><span class="n">getvalue</span><span class="p">()</span>
+                               <span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">encoding</span><span class="p">))</span>
+<div class="viewcode-block" id="EncapsulatedFile.update_file_paths_dict"><a class="viewcode-back" href="../../api/zaluski.html#zaluski.filedatabuffer.EncapsulatedFile.update_file_paths_dict">[docs]</a>    <span class="k">def</span> <span class="nf">update_file_paths_dict</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Make this EncapsulatedFile&#39;s master FileDataBuffer aware of the mtime</span>
+<span class="sd">        and hash of our associated file.&#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">path</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">file_paths_dict</span><span class="p">[</span><span class="s1">&#39;mtime&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">mtime</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">file_paths_dict</span><span class="p">[</span><span class="s1">&#39;hash&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">hash</span></div>
+<div class="viewcode-block" id="EncapsulatedFile.update"><a class="viewcode-back" href="../../api/zaluski.html#zaluski.filedatabuffer.EncapsulatedFile.update">[docs]</a>    <span class="k">def</span> <span class="nf">update</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">mtime</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">path</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">diskmtime</span> <span class="o">=</span> <span class="n">mtime</span> <span class="ow">or</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">getmtime</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">path</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">diskmtime</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">mtime</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stream</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">path</span><span class="p">,</span> <span class="s1">&#39;rb&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">pdb_file</span><span class="p">:</span>
+                    <span class="n">contents</span> <span class="o">=</span> <span class="n">pdb_file</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">mtime</span> <span class="o">=</span> <span class="n">diskmtime</span>
+                <span class="n">hash_fun</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">md5</span><span class="p">()</span>
+                <span class="n">hash_fun</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">contents</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">hash</span> <span class="o">=</span> <span class="n">hash_fun</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_stream</span> <span class="o">=</span> <span class="n">io</span><span class="o">.</span><span class="n">BytesIO</span><span class="p">(</span><span class="n">contents</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">update_file_paths_dict</span><span class="p">()</span></div></div>
+
+<span class="c1">### FileDataBuffer and friends</span>
+
+<span class="k">def</span> <span class="nf">_make_get</span><span class="p">(</span><span class="n">data_name</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Create a get_ accessor function for a FileDataBuffer data type.&#39;&#39;&#39;</span>
+    <span class="c1"># Python duck typing philosophy says we shouldn&#39;t do any explicit checking</span>
+    <span class="c1"># of the thing stored at the attribute, but in any case, it should be a</span>
+    <span class="c1"># function that takes at least one file path, with the rest of its</span>
+    <span class="c1"># arguments being hashables. See the FileDataBuffer docs for more info.</span>
+    <span class="k">def</span> <span class="nf">get</span><span class="p">(</span><span class="n">self_</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="n">calculate</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">self_</span><span class="p">,</span> <span class="s1">&#39;calculate_&#39;</span><span class="o">+</span><span class="n">data_name</span><span class="p">)</span>
+        <span class="n">proto_args</span> <span class="o">=</span> <span class="n">self_</span><span class="o">.</span><span class="n">_proto_args</span><span class="p">(</span><span class="n">data_name</span><span class="p">,</span> <span class="n">args</span><span class="p">,</span> <span class="n">kwargs</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">calculate</span><span class="p">,</span> <span class="s1">&#39;non_cacheable&#39;</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">calculate</span><span class="p">(</span><span class="o">*</span><span class="n">proto_args</span><span class="o">.</span><span class="n">calcargs</span><span class="p">,</span>
+                             <span class="o">**</span><span class="n">proto_args</span><span class="o">.</span><span class="n">calckwargs</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">path</span> <span class="ow">in</span> <span class="n">proto_args</span><span class="o">.</span><span class="n">paths</span><span class="p">:</span>
+            <span class="n">self_</span><span class="o">.</span><span class="n">retrieve_data_from_cache</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">path</span><span class="p">))</span>
+        <span class="n">file_data</span> <span class="o">=</span> <span class="n">self_</span><span class="o">.</span><span class="n">data</span> \
+                         <span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">proto_args</span><span class="o">.</span><span class="n">prime_hash</span><span class="p">,</span> <span class="p">{})</span> \
+                         <span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">data_name</span><span class="p">,</span> <span class="p">{})</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">self_</span><span class="p">,</span> <span class="s1">&#39;import_&#39;</span><span class="o">+</span><span class="n">data_name</span><span class="p">):</span>
+                <span class="k">return</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">self_</span><span class="p">,</span> <span class="s1">&#39;import_&#39;</span><span class="o">+</span><span class="n">data_name</span><span class="p">)</span> \
+                              <span class="p">(</span><span class="n">file_data</span><span class="p">[</span><span class="n">proto_args</span><span class="o">.</span><span class="n">accessor_string</span><span class="p">])</span>
+            <span class="k">return</span> <span class="n">file_data</span><span class="p">[</span><span class="n">proto_args</span><span class="o">.</span><span class="n">accessor_string</span><span class="p">]</span>
+        <span class="k">except</span> <span class="ne">KeyError</span><span class="p">:</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">self_</span><span class="o">.</span><span class="n">calculatingp</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span><span class="s1">&#39;That file</span><span class="se">\&#39;</span><span class="s1">s not in the cache.&#39;</span><span class="p">)</span>
+            <span class="c1"># construct new args</span>
+            <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">self_</span><span class="p">,</span> <span class="s1">&#39;export_&#39;</span><span class="o">+</span><span class="n">data_name</span><span class="p">):</span>
+                <span class="n">file_data</span><span class="p">[</span><span class="n">proto_args</span><span class="o">.</span><span class="n">accessor_string</span><span class="p">]</span> <span class="o">=</span> \
+                    <span class="nb">getattr</span><span class="p">(</span><span class="n">self_</span><span class="p">,</span> <span class="s1">&#39;export_&#39;</span><span class="o">+</span><span class="n">data_name</span><span class="p">)</span> \
+                           <span class="p">(</span><span class="n">calculate</span><span class="p">(</span><span class="o">*</span><span class="n">proto_args</span><span class="o">.</span><span class="n">calcargs</span><span class="p">,</span>
+                                      <span class="o">**</span><span class="n">proto_args</span><span class="o">.</span><span class="n">calckwargs</span><span class="p">))</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">file_data</span><span class="p">[</span><span class="n">proto_args</span><span class="o">.</span><span class="n">accessor_string</span><span class="p">]</span> <span class="o">=</span> \
+                    <span class="n">calculate</span><span class="p">(</span><span class="o">*</span><span class="n">proto_args</span><span class="o">.</span><span class="n">calcargs</span><span class="p">,</span>
+                              <span class="o">**</span><span class="n">proto_args</span><span class="o">.</span><span class="n">calckwargs</span><span class="p">)</span>
+            <span class="n">self_</span><span class="o">.</span><span class="n">changed_dirs</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">path</span><span class="p">)</span> \
+                                      <span class="k">for</span> <span class="n">path</span> <span class="ow">in</span> <span class="n">proto_args</span><span class="o">.</span><span class="n">paths</span><span class="p">)</span>
+            <span class="n">self_</span><span class="o">.</span><span class="n">update_caches</span><span class="p">()</span>
+            <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">self_</span><span class="p">,</span> <span class="s1">&#39;import_&#39;</span><span class="o">+</span><span class="n">data_name</span><span class="p">):</span>
+                <span class="k">return</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">self_</span><span class="p">,</span> <span class="s1">&#39;import_&#39;</span><span class="o">+</span><span class="n">data_name</span><span class="p">)</span> \
+                              <span class="p">(</span><span class="n">file_data</span><span class="p">[</span><span class="n">proto_args</span><span class="o">.</span><span class="n">accessor_string</span><span class="p">])</span>
+            <span class="k">return</span> <span class="n">file_data</span><span class="p">[</span><span class="n">proto_args</span><span class="o">.</span><span class="n">accessor_string</span><span class="p">]</span>
+    <span class="n">get</span><span class="o">.</span><span class="vm">__name__</span> <span class="o">=</span> <span class="s1">&#39;get_&#39;</span><span class="o">+</span><span class="n">data_name</span>
+    <span class="n">get</span><span class="o">.</span><span class="vm">__doc__</span>  <span class="o">=</span> <span class="s1">&#39;Call calculate_&#39;</span><span class="o">+</span><span class="n">data_name</span><span class="o">+</span> \
+                   <span class="s1">&#39;() on a file path with caching magic.&#39;</span>
+    <span class="k">return</span> <span class="n">get</span>
+
+<span class="k">def</span> <span class="nf">_make_gather</span><span class="p">(</span><span class="n">data_name</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Make a gather_ accessor for a FileDataBuffer that concurrently operates</span>
+<span class="sd">    on a list of values for an argument,  instead of a single value.&#39;&#39;&#39;</span>
+    <span class="k">def</span> <span class="nf">gather</span><span class="p">(</span><span class="n">self_</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="n">argi</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="c1"># New keyword argument argi: which argument is to be made into a list.</span>
+        <span class="c1"># If it is a number, then it corresponds to a positional argument (self</span>
+        <span class="c1"># not included in the numbering). If it is a string, then it</span>
+        <span class="c1"># corresponds to /any/ argument with the name of the string (which</span>
+        <span class="c1"># could be a required positional argument). It may also be a list of</span>
+        <span class="c1"># such indices, to listify for all of those.</span>
+        <span class="n">calculate</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">self_</span><span class="p">,</span> <span class="s1">&#39;calculate_&#39;</span><span class="o">+</span><span class="n">data_name</span><span class="p">)</span>
+        <span class="c1"># If cacheablep is False, then the results won&#39;t be permanently saved</span>
+        <span class="c1"># in the data dict, and the import/export methods will be bypassed.</span>
+        <span class="n">cacheablep</span> <span class="o">=</span> <span class="ow">not</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">calculate</span><span class="p">,</span> <span class="s1">&#39;non_cacheable&#39;</span><span class="p">)</span>
+
+        <span class="k">def</span> <span class="nf">unpack_args</span><span class="p">():</span>
+            <span class="sd">&#39;&#39;&#39;A generator that will come up with a tuple of (args, ukwargs)</span>
+<span class="sd">            until all the requested combinations have been done.</span>
+<span class="sd">            &#39;&#39;&#39;</span>
+            <span class="c1"># (also I have a strong feeling this could all be rewritten more</span>
+            <span class="c1">#  concisely, but I have no idea how to make it happen)</span>
+            <span class="n">std_argi</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">deepcopy</span><span class="p">(</span><span class="n">argi</span><span class="p">)</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">std_argi</span><span class="p">,</span> <span class="s1">&#39;__iter__&#39;</span><span class="p">)</span> <span class="ow">or</span> \
+               <span class="nb">isinstance</span><span class="p">(</span><span class="n">std_argi</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+                <span class="n">std_argi</span> <span class="o">=</span> <span class="p">[</span><span class="n">std_argi</span><span class="p">]</span>
+            <span class="n">argspec</span> <span class="o">=</span> <span class="n">inspect</span><span class="o">.</span><span class="n">getfullargspec</span><span class="p">(</span><span class="n">calculate</span><span class="p">)</span>
+            <span class="n">lendefaults</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">argspec</span><span class="o">.</span><span class="n">defaults</span><span class="p">)</span> \
+                          <span class="k">if</span> <span class="n">argspec</span><span class="o">.</span><span class="n">defaults</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> \
+                          <span class="k">else</span> <span class="mi">0</span>
+            <span class="c1"># Using Functional CodeTM, do for all possible combinations of args</span>
+            <span class="c1"># from the lists received for the listified args:</span>
+            <span class="k">for</span> <span class="n">combo</span> <span class="ow">in</span> <span class="n">itertools</span><span class="o">.</span><span class="n">product</span><span class="p">(</span>
+                <span class="o">*</span><span class="p">(((</span><span class="n">kwargs</span><span class="p">[</span><span class="n">argspec</span><span class="o">.</span><span class="n">args</span><span class="p">[</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">]]</span> <span class="k">if</span> <span class="n">i</span> <span class="o">&gt;=</span> <span class="nb">len</span><span class="p">(</span><span class="n">argspec</span><span class="o">.</span><span class="n">args</span><span class="p">)</span> <span class="o">-</span> \
+                                                      <span class="n">lendefaults</span> <span class="o">-</span> <span class="mi">1</span> \
+                    <span class="k">else</span> <span class="n">args</span><span class="p">[</span><span class="n">i</span><span class="p">])</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="nb">int</span><span class="p">)</span> \
+                   <span class="k">else</span> <span class="n">kwargs</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="k">else</span> <span class="kc">None</span><span class="p">)</span> \
+                  <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">std_argi</span><span class="p">)):</span>
+                <span class="n">newargs</span>   <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">args</span><span class="p">))</span>
+                <span class="n">newkwargs</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">kwargs</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">std_argi</span><span class="p">,</span>
+                                    <span class="p">(</span><span class="n">value</span> <span class="k">for</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">combo</span><span class="p">)):</span>
+                    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="nb">int</span><span class="p">):</span>
+                        <span class="c1"># -1 to account for self arg</span>
+                        <span class="k">if</span> <span class="n">i</span> <span class="o">&gt;=</span> <span class="nb">len</span><span class="p">(</span><span class="n">argspec</span><span class="o">.</span><span class="n">args</span><span class="p">)</span> <span class="o">-</span> <span class="n">lendefaults</span> <span class="o">-</span> <span class="mi">1</span><span class="p">:</span>
+                            <span class="c1"># again, +1 to account for self arg</span>
+                            <span class="n">newkwargs</span><span class="p">[</span><span class="n">argspec</span><span class="o">.</span><span class="n">args</span><span class="p">[</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">]]</span> <span class="o">=</span> <span class="n">value</span>
+                        <span class="k">else</span><span class="p">:</span>
+                            <span class="n">newargs</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+                    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+                        <span class="n">newkwargs</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+                <span class="k">yield</span> <span class="p">(</span><span class="n">newargs</span><span class="p">,</span> <span class="n">newkwargs</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">MPISIZE</span> <span class="o">==</span> <span class="mi">1</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">self_</span><span class="o">.</span><span class="n">calculatingp</span><span class="p">:</span>
+            <span class="n">final_result</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="k">for</span> <span class="n">uargs</span><span class="p">,</span> <span class="n">ukwargs</span> <span class="ow">in</span> <span class="n">unpack_args</span><span class="p">():</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="n">final_result</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="nb">getattr</span><span class="p">(</span><span class="n">self_</span><span class="p">,</span> <span class="s1">&#39;get_&#39;</span><span class="o">+</span><span class="n">data_name</span><span class="p">)</span> \
+                                               <span class="p">(</span><span class="o">*</span><span class="n">uargs</span><span class="p">,</span> <span class="o">**</span><span class="n">ukwargs</span><span class="p">))</span>
+                <span class="k">except</span> <span class="ne">KeyError</span><span class="p">:</span>
+                    <span class="k">pass</span>
+            <span class="k">return</span> <span class="n">final_result</span>
+        <span class="n">MPITag</span> <span class="o">=</span> <span class="n">enum</span><span class="o">.</span><span class="n">Enum</span><span class="p">(</span><span class="s1">&#39;MPITag&#39;</span><span class="p">,</span> <span class="s1">&#39;QUIT_TAG READY_TAG DONE_TAG WORK_TAG&#39;</span><span class="p">)</span>
+        <span class="c1"># QUIT_TAG:  getting this instead of a path kills a worker thread</span>
+        <span class="c1"># READY_TAG: used once by worker, to sync startup</span>
+        <span class="c1"># DONE_TAG:  used by worker to pass result and request new job</span>
+        <span class="c1"># WORK_TAG:  used by master to pass next path to worker</span>
+        <span class="c1"># will be used to index into self_.data to retrieve final result:</span>
+        <span class="n">file_indices_list</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">if</span> <span class="n">MPIRANK</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="c1">## helper functions</span>
+            <span class="k">def</span> <span class="nf">recv_result</span><span class="p">():</span>
+                <span class="k">return</span> <span class="p">(</span><span class="n">MPICOMM</span><span class="o">.</span><span class="n">recv</span><span class="p">(</span><span class="n">source</span><span class="o">=</span><span class="n">MPI</span><span class="o">.</span><span class="n">ANY_SOURCE</span><span class="p">,</span>
+                                     <span class="n">tag</span><span class="o">=</span><span class="n">MPI</span><span class="o">.</span><span class="n">ANY_TAG</span><span class="p">,</span>
+                                     <span class="n">status</span><span class="o">=</span><span class="n">MPISTATUS</span><span class="p">),</span>
+                        <span class="n">MPISTATUS</span><span class="o">.</span><span class="n">Get_source</span><span class="p">(),</span>
+                        <span class="n">MPISTATUS</span><span class="o">.</span><span class="n">Get_tag</span><span class="p">())</span>
+            <span class="k">def</span> <span class="nf">save_result</span><span class="p">(</span><span class="n">index</span><span class="p">,</span> <span class="n">proto_args</span><span class="p">,</span> <span class="n">result_data</span><span class="p">,</span> <span class="n">exportp</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+                <span class="n">_DEBUG_OUT</span><span class="p">(</span><span class="s1">&#39;about to save result for &#39;</span> <span class="o">+</span> \
+                          <span class="n">proto_args</span><span class="o">.</span><span class="n">prime_path</span><span class="p">)</span>
+                <span class="n">proto_args</span><span class="o">.</span><span class="n">update_paths</span><span class="p">()</span>
+                <span class="n">file_data</span> <span class="o">=</span> <span class="n">self_</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">proto_args</span><span class="o">.</span><span class="n">prime_hash</span><span class="p">,</span>
+                                                  <span class="p">{})</span> \
+                                      <span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">data_name</span><span class="p">,</span> <span class="p">{})</span>
+                <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">self_</span><span class="p">,</span> <span class="s1">&#39;export_&#39;</span><span class="o">+</span><span class="n">data_name</span><span class="p">)</span> <span class="ow">and</span> \
+                   <span class="n">exportp</span> <span class="ow">and</span> <span class="n">cacheablep</span><span class="p">:</span>
+                    <span class="n">file_data</span><span class="p">[</span><span class="n">proto_args</span><span class="o">.</span><span class="n">accessor_string</span><span class="p">]</span> <span class="o">=</span> \
+                        <span class="nb">getattr</span><span class="p">(</span><span class="n">self_</span><span class="p">,</span> <span class="s1">&#39;export_&#39;</span><span class="o">+</span><span class="n">data_name</span><span class="p">)(</span><span class="n">result_data</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">file_data</span><span class="p">[</span><span class="n">proto_args</span><span class="o">.</span><span class="n">accessor_string</span><span class="p">]</span> <span class="o">=</span> <span class="n">result_data</span>
+                <span class="n">file_indices_list</span><span class="o">.</span><span class="n">append</span><span class="p">([</span><span class="n">index</span><span class="p">,</span>
+                                          <span class="n">proto_args</span><span class="o">.</span><span class="n">prime_hash</span><span class="p">,</span>
+                                          <span class="n">data_name</span><span class="p">,</span>
+                                          <span class="n">proto_args</span><span class="o">.</span><span class="n">accessor_string</span><span class="p">])</span>
+                <span class="n">_DEBUG_OUT</span><span class="p">(</span><span class="s1">&#39;just saved result for &#39;</span> <span class="o">+</span> <span class="n">proto_args</span><span class="o">.</span><span class="n">prime_path</span><span class="p">)</span>
+            <span class="c1">## main loop</span>
+            <span class="k">for</span> <span class="n">index</span><span class="p">,</span> <span class="n">uargs_and_ukwargs</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">unpack_args</span><span class="p">()):</span>
+                <span class="n">uargs</span><span class="p">,</span> <span class="n">ukwargs</span> <span class="o">=</span> <span class="n">uargs_and_ukwargs</span>
+                <span class="n">proto_args</span> <span class="o">=</span> <span class="n">self_</span><span class="o">.</span><span class="n">proto_args</span><span class="p">(</span><span class="n">data_name</span><span class="p">,</span> <span class="n">uargs</span><span class="p">,</span> <span class="n">ukwargs</span><span class="p">)</span>
+                <span class="c1"># lazy cache retrieval!</span>
+                <span class="k">if</span> <span class="n">cacheablep</span><span class="p">:</span>
+                    <span class="k">for</span> <span class="n">path</span> <span class="ow">in</span> <span class="n">proto_args</span><span class="o">.</span><span class="n">paths</span><span class="p">:</span>
+                        <span class="n">self_</span><span class="o">.</span><span class="n">retrieve_data_from_cache</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">path</span><span class="p">))</span>
+                <span class="n">file_data</span> <span class="o">=</span> <span class="n">self_</span><span class="o">.</span><span class="n">data</span> \
+                                 <span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">proto_args</span><span class="o">.</span><span class="n">prime_hash</span><span class="p">,</span> <span class="p">{})</span> \
+                                 <span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">data_name</span><span class="p">,</span> <span class="p">{})</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="k">assert</span> <span class="n">cacheablep</span>
+                    <span class="n">save_result</span><span class="p">(</span><span class="n">index</span><span class="p">,</span>
+                                <span class="n">proto_args</span><span class="p">,</span>
+                                <span class="n">file_data</span><span class="p">[</span><span class="n">proto_args</span><span class="o">.</span><span class="n">accessor_string</span><span class="p">],</span>
+                                <span class="n">exportp</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+                <span class="k">except</span> <span class="p">(</span><span class="ne">KeyError</span><span class="p">,</span> <span class="ne">AssertionError</span><span class="p">):</span>
+                    <span class="n">result</span><span class="p">,</span> <span class="n">result_source</span><span class="p">,</span> <span class="n">result_tag</span> <span class="o">=</span> <span class="n">recv_result</span><span class="p">()</span>
+                    <span class="n">_DEBUG_OUT</span><span class="p">(</span><span class="s1">&#39;assigning &#39;</span> <span class="o">+</span> <span class="n">proto_args</span><span class="o">.</span><span class="n">prime_path</span> <span class="o">+</span> \
+                              <span class="s1">&#39; to &#39;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">result_source</span><span class="p">))</span>
+                    <span class="n">MPICOMM</span><span class="o">.</span><span class="n">send</span><span class="p">([</span><span class="n">index</span><span class="p">,</span> <span class="n">proto_args</span><span class="p">],</span>
+                                 <span class="n">dest</span><span class="o">=</span><span class="n">result_source</span><span class="p">,</span> <span class="n">tag</span><span class="o">=</span><span class="n">MPITag</span><span class="o">.</span><span class="n">WORK_TAG</span><span class="p">)</span>
+                    <span class="n">_DEBUG_OUT</span><span class="p">(</span><span class="s1">&#39;assignment sent&#39;</span><span class="p">)</span>
+                    <span class="k">if</span> <span class="n">result_tag</span> <span class="o">==</span> <span class="n">MPITag</span><span class="o">.</span><span class="n">DONE_TAG</span><span class="p">:</span>
+                        <span class="n">save_result</span><span class="p">(</span><span class="o">*</span><span class="n">result</span><span class="p">)</span>
+                        <span class="n">self_</span><span class="o">.</span><span class="n">changed_dirs</span> \
+                             <span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">path</span><span class="p">)</span> \
+                                     <span class="k">for</span> <span class="n">path</span> \
+                                     <span class="ow">in</span> <span class="n">result</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">paths</span><span class="p">)</span>
+                        <span class="n">self_</span><span class="o">.</span><span class="n">update_caches</span><span class="p">()</span>
+            <span class="c1">## clean up workers once we run out of stuff to assign</span>
+            <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">MPISIZE</span><span class="o">-</span><span class="mi">1</span><span class="p">):</span>
+                <span class="n">result</span><span class="p">,</span> <span class="n">result_source</span><span class="p">,</span> <span class="n">result_tag</span> <span class="o">=</span> <span class="n">recv_result</span><span class="p">()</span>
+                <span class="n">_DEBUG_OUT</span><span class="p">(</span><span class="s1">&#39;data received from &#39;</span><span class="o">+</span><span class="nb">str</span><span class="p">(</span><span class="n">result_source</span><span class="p">))</span>
+                <span class="k">if</span> <span class="n">result_tag</span> <span class="o">==</span> <span class="n">MPITag</span><span class="o">.</span><span class="n">DONE_TAG</span><span class="p">:</span>
+                    <span class="n">save_result</span><span class="p">(</span><span class="o">*</span><span class="n">result</span><span class="p">)</span>
+                    <span class="n">self_</span><span class="o">.</span><span class="n">changed_dirs</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">path</span><span class="p">)</span> \
+                                              <span class="k">for</span> <span class="n">path</span> <span class="ow">in</span> <span class="n">result</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">paths</span><span class="p">)</span>
+                    <span class="n">self_</span><span class="o">.</span><span class="n">update_caches</span><span class="p">()</span>
+                <span class="n">_DEBUG_OUT</span><span class="p">(</span><span class="s1">&#39;all files done. killing &#39;</span><span class="o">+</span><span class="nb">str</span><span class="p">(</span><span class="n">result_source</span><span class="p">))</span>
+                <span class="n">MPICOMM</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">MPITag</span><span class="o">.</span><span class="n">QUIT_TAG</span><span class="p">,</span>
+                             <span class="n">dest</span><span class="o">=</span><span class="n">result_source</span><span class="p">,</span> <span class="n">tag</span><span class="o">=</span><span class="n">MPITag</span><span class="o">.</span><span class="n">WORK_TAG</span><span class="p">)</span>
+                <span class="n">_DEBUG_OUT</span><span class="p">(</span><span class="s1">&#39;worker killed&#39;</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">MPICOMM</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="n">dest</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">tag</span><span class="o">=</span><span class="n">MPITag</span><span class="o">.</span><span class="n">READY_TAG</span><span class="p">)</span>
+            <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+                <span class="n">package</span> <span class="o">=</span> <span class="n">MPICOMM</span><span class="o">.</span><span class="n">recv</span><span class="p">(</span><span class="n">source</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">tag</span><span class="o">=</span><span class="n">MPITag</span><span class="o">.</span><span class="n">WORK_TAG</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">package</span> <span class="o">==</span> <span class="n">MPITag</span><span class="o">.</span><span class="n">QUIT_TAG</span><span class="p">:</span>
+                    <span class="k">break</span>
+                <span class="n">index</span><span class="p">,</span> <span class="n">proto_args</span> <span class="o">=</span> <span class="n">package</span>
+                <span class="n">result_data</span> <span class="o">=</span> <span class="n">calculate</span><span class="p">(</span><span class="o">*</span><span class="n">proto_args</span><span class="o">.</span><span class="n">calcargs</span><span class="p">,</span>
+                                        <span class="o">**</span><span class="n">proto_args</span><span class="o">.</span><span class="n">calckwargs</span><span class="p">)</span>
+                <span class="n">MPICOMM</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">([</span><span class="n">index</span><span class="p">,</span>
+                                        <span class="n">proto_args</span><span class="p">,</span>
+                                        <span class="n">result_data</span><span class="p">]),</span>
+                             <span class="n">dest</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">tag</span><span class="o">=</span><span class="n">MPITag</span><span class="o">.</span><span class="n">DONE_TAG</span><span class="p">)</span>
+        <span class="c1"># Synchronize everything that could have possibly changed:</span>
+        <span class="n">self_</span><span class="o">.</span><span class="n">data</span> <span class="o">=</span> <span class="n">MPICOMM</span><span class="o">.</span><span class="n">bcast</span><span class="p">(</span><span class="n">self_</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="n">root</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">self_</span><span class="o">.</span><span class="n">file_paths</span> <span class="o">=</span> <span class="n">MPICOMM</span><span class="o">.</span><span class="n">bcast</span><span class="p">(</span><span class="n">self_</span><span class="o">.</span><span class="n">file_paths</span><span class="p">,</span> <span class="n">root</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">self_</span><span class="o">.</span><span class="n">cache_paths</span> <span class="o">=</span> <span class="n">MPICOMM</span><span class="o">.</span><span class="n">bcast</span><span class="p">(</span><span class="n">self_</span><span class="o">.</span><span class="n">cache_paths</span><span class="p">,</span> <span class="n">root</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">file_indices_list</span> <span class="o">=</span> <span class="n">MPICOMM</span><span class="o">.</span><span class="n">bcast</span><span class="p">(</span><span class="n">file_indices_list</span><span class="p">,</span> <span class="n">root</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+        <span class="c1"># All threads should be on the same page at this point.</span>
+        <span class="n">file_indices_list</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+        <span class="c1"># Sort by the index produced by enumerating unpack_args() above.</span>
+        <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">self_</span><span class="p">,</span> <span class="s1">&#39;import_&#39;</span><span class="o">+</span><span class="n">data_name</span><span class="p">)</span> <span class="ow">and</span> <span class="n">cacheablep</span><span class="p">:</span>
+            <span class="n">retval</span> <span class="o">=</span> <span class="p">[</span><span class="nb">getattr</span><span class="p">(</span><span class="n">self_</span><span class="p">,</span> <span class="s1">&#39;import_&#39;</span><span class="o">+</span><span class="n">data_name</span><span class="p">)</span> \
+                             <span class="p">(</span><span class="n">self_</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="n">indices</span><span class="p">[</span><span class="mi">1</span><span class="p">]]</span> \
+                                        <span class="p">[</span><span class="n">indices</span><span class="p">[</span><span class="mi">2</span><span class="p">]]</span> \
+                                        <span class="p">[</span><span class="n">indices</span><span class="p">[</span><span class="mi">3</span><span class="p">]])</span> \
+                      <span class="k">for</span> <span class="n">indices</span> <span class="ow">in</span> <span class="n">file_indices_list</span><span class="p">]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">retval</span> <span class="o">=</span> <span class="p">[</span><span class="n">self_</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="n">indices</span><span class="p">[</span><span class="mi">1</span><span class="p">]][</span><span class="n">indices</span><span class="p">[</span><span class="mi">2</span><span class="p">]][</span><span class="n">indices</span><span class="p">[</span><span class="mi">3</span><span class="p">]]</span> \
+                      <span class="k">for</span> <span class="n">indices</span> <span class="ow">in</span> <span class="n">file_indices_list</span><span class="p">]</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">cacheablep</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">indices</span> <span class="ow">in</span> <span class="n">file_indices_list</span><span class="p">:</span>
+                <span class="k">del</span> <span class="n">self_</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="n">indices</span><span class="p">[</span><span class="mi">1</span><span class="p">]][</span><span class="n">indices</span><span class="p">[</span><span class="mi">2</span><span class="p">]][</span><span class="n">indices</span><span class="p">[</span><span class="mi">3</span><span class="p">]]</span>
+        <span class="k">return</span> <span class="n">retval</span>
+    <span class="c1"># Why doesn&#39;t this *work*?</span>
+    <span class="n">gather</span><span class="o">.</span><span class="vm">__name__</span> <span class="o">=</span> <span class="s1">&#39;gather_&#39;</span><span class="o">+</span><span class="n">data_name</span>
+    <span class="n">gather</span><span class="o">.</span><span class="vm">__doc__</span>  <span class="o">=</span> <span class="s1">&#39;Call calculate_&#39;</span><span class="o">+</span><span class="n">data_name</span><span class="o">+</span> \
+                      <span class="s1">&#39;() on a list of file paths with concurrency magic.&#39;</span>
+    <span class="k">return</span> <span class="n">gather</span>
+
+
+<div class="viewcode-block" id="FileDataBuffer"><a class="viewcode-back" href="../../api/zaluski.html#zaluski.filedatabuffer.FileDataBuffer">[docs]</a><span class="k">class</span> <span class="nc">FileDataBuffer</span><span class="p">():</span>
+    <span class="sd">&#39;&#39;&#39;Singleton class that stores information about files, to be used as a data</span>
+<span class="sd">    buffer. Its purpose is to intelligently abstract the retrieval of</span>
+<span class="sd">    information about files in such a way that the information is cached and/or</span>
+<span class="sd">    buffered in the process. The only methods in it that should ideally be used</span>
+<span class="sd">    externally are the data retrieval methods, and out of those ideally just the</span>
+<span class="sd">    caching ones (currently get_ and gather_ methods). In practice,</span>
+<span class="sd">    update_caches() is also used externally to force a cache update.</span>
+
+<span class="sd">    Internally, it holds a data dict, which indexes all the data first by the</span>
+<span class="sd">    MD5 hash of the contents of the file that produced the data, then the type</span>
+<span class="sd">    of data it is (e.g. RMSD or score), and finally the parameters that</span>
+<span class="sd">    produced the data (like the particular weights on the scorefunction for a</span>
+<span class="sd">    score). It also holds a dict of paths to files, the contents hashes of these</span>
+<span class="sd">    files, and the mtime of the file at which the contents hash was produced, so</span>
+<span class="sd">    that if it is asked about a file whose hash is already known, it does not</span>
+<span class="sd">    need to recalculate it. Finally, it also holds a dict mapping the caches</span>
+<span class="sd">    it&#39;s already loaded to their mtimes at which they were loaded, so that it</span>
+<span class="sd">    does not load a cache unless it&#39;s changed.</span>
+
+<span class="sd">    On disk, the data is cached in a .zaluski_cache file that contains a JSON</span>
+<span class="sd">    array of the data dict and the file paths dict, each with only the entries</span>
+<span class="sd">    for the file files in the same folder as the cache. If caching is turned on,</span>
+<span class="sd">    whenever the buffer generates data for a file, it will check whether the</span>
+<span class="sd">    file&#39;s folder has a cache with that data yet, and if not, it will write one</span>
+<span class="sd">    (making sure to load any cached data in that folder that already exists).</span>
+<span class="sd">    Caching is done in a thread-safe manner, with file locks. Throughout the</span>
+<span class="sd">    reading, updating, and writing of a cache, the buffer will maintain an</span>
+<span class="sd">    exclusive lock on the cache, so that it doesn&#39;t get updated on disk in</span>
+<span class="sd">    between its reading and updating/writing, which would cause the first</span>
+<span class="sd">    update to get lost.</span>
+
+<span class="sd">    The ability to get a particular type of data is added to the buffer by</span>
+<span class="sd">    defining a calculate_ method. Corresponding get_ and gather_ methods are</span>
+<span class="sd">    created dynamically at initialization, which add caching to the calculate_</span>
+<span class="sd">    method, and in the case of gather_, concurrently operate on lists given for</span>
+<span class="sd">    arguments that normally don&#39;t take them. Because PDB hashes are used as the</span>
+<span class="sd">    top-level keys in the data dict, each calculate_ method should take at</span>
+<span class="sd">    least one PDB, either as a stream or a path. See the comment above the</span>
+<span class="sd">    calculate_ methods for more details.</span>
+
+<span class="sd">    The internal settings calculatingp and plottingp work like this:</span>
+
+<span class="sd">      - calculatingp = False: The buffer will only retrieve cached information,</span>
+<span class="sd">          never calculating its own data or saving caches. get_ operations will</span>
+<span class="sd">          return a KeyError if the data for a file is not in the caches it&#39;s</span>
+<span class="sd">          loaded, and gather_ operations will leave a file&#39;s data out of the</span>
+<span class="sd">          list they return if they can&#39;t find it.</span>
+<span class="sd">      - calculatingp = True, cachingp = False: The buffer will calculate new</span>
+<span class="sd">          information if it doesn&#39;t have it, but never save it. Useful if</span>
+<span class="sd">          real-time caching is taking too much time, and if instead you want to</span>
+<span class="sd">          do it manually by calling update_caches(force=True) at select times.</span>
+<span class="sd">          Note that with cachingp = False, update_caches() doesn&#39;t do anything</span>
+<span class="sd">          unless you call it with force=True. (This is the case with</span>
+<span class="sd">          calculatingp = False as well, making it the only real effect of</span>
+<span class="sd">          cachingp in that case.)</span>
+<span class="sd">      - calculatingp = True, cachingp = True: The buffer will calculate new</span>
+<span class="sd">          information if it doesn&#39;t have it, and save it to disk immediately</span>
+<span class="sd">          all of the time.</span>
+
+<span class="sd">    The structure of the buffer&#39;s data variables, although summarized above,</span>
+<span class="sd">    can be stated more succinctly as:</span>
+
+<span class="sd">    self.data:</span>
+<span class="sd">    { content_key : { data_function_name :</span>
+<span class="sd">                        { data_function_params_tuple : data } } }</span>
+<span class="sd">    self.file_paths:</span>
+<span class="sd">    { file_path : { &#39;mtime&#39; : mtime_at_last_hashing,</span>
+<span class="sd">                    &#39;hash&#39;  : contents_hash } }</span>
+<span class="sd">    self.cache_paths:</span>
+<span class="sd">    { cache_file_dir_path : mtime_at_last_access }</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+
+    <span class="c1">## Core functionality</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">calculatingp</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">cachingp</span> <span class="o">=</span> <span class="n">MPIRANK</span> <span class="o">==</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">data</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">file_paths</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">cache_paths</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">changed_dirs</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+        <span class="c1"># Monkey patch in the data accessors:</span>
+        <span class="n">attribute_names</span> <span class="o">=</span> <span class="nb">dir</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">data_name</span> <span class="ow">in</span> <span class="p">(</span><span class="n">attribute_name</span><span class="p">[</span><span class="mi">10</span><span class="p">:]</span> \
+                          <span class="k">for</span> <span class="n">attribute_name</span> <span class="ow">in</span> <span class="n">attribute_names</span> \
+                          <span class="k">if</span> <span class="n">attribute_name</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s1">&#39;calculate_&#39;</span><span class="p">)):</span>
+            <span class="n">calcfxn</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s1">&#39;calculate_&#39;</span><span class="o">+</span><span class="n">data_name</span><span class="p">)</span>
+
+            <span class="c1"># Rationale for this warning: The point at which the buffer</span>
+            <span class="c1"># actually fails when you forget a self arg is deep inside</span>
+            <span class="c1"># ProtoArgs, which is very cryptic and hard to debug.</span>
+            <span class="k">if</span> <span class="n">inspect</span><span class="o">.</span><span class="n">getfullargspec</span><span class="p">(</span><span class="n">calcfxn</span><span class="p">)</span><span class="o">.</span><span class="n">args</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="s1">&#39;self&#39;</span><span class="p">:</span>
+                <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span><span class="s1">&#39;Added method calculate_&#39;</span> <span class="o">+</span> <span class="n">data_name</span> <span class="o">+</span> \
+                              <span class="s1">&#39; has no self arg.&#39;</span><span class="p">,</span> <span class="ne">SyntaxWarning</span><span class="p">)</span>
+
+            <span class="c1"># specialized import/export functions</span>
+            <span class="n">special_porters</span> <span class="o">=</span> \
+                <span class="p">((</span><span class="s1">&#39;returns_ndarray&#39;</span><span class="p">,</span>    <span class="p">(</span><span class="n">decompress_ndarray</span><span class="p">,</span>
+                                         <span class="n">compress_ndarray</span><span class="p">)),</span>
+                 <span class="p">(</span><span class="s1">&#39;returns_pickleable&#39;</span><span class="p">,</span> <span class="p">(</span><span class="n">decompress_pickleable</span><span class="p">,</span>
+                                         <span class="n">compress_pickleable</span><span class="p">)))</span>
+            <span class="k">for</span> <span class="n">attribute</span><span class="p">,</span> <span class="p">(</span><span class="n">import_func</span><span class="p">,</span> <span class="n">export_func</span><span class="p">)</span> <span class="ow">in</span> <span class="n">special_porters</span><span class="p">:</span>
+                <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">calcfxn</span><span class="p">,</span> <span class="n">attribute</span><span class="p">):</span>
+                    <span class="nb">setattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s1">&#39;import_&#39;</span><span class="o">+</span><span class="n">data_name</span><span class="p">,</span>
+                            <span class="n">types</span><span class="o">.</span><span class="n">MethodType</span><span class="p">(</span><span class="k">lambda</span> <span class="n">self_</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">__f</span><span class="o">=</span><span class="n">import_func</span><span class="p">:</span>
+                                                 <span class="n">__f</span><span class="p">(</span><span class="n">x</span><span class="p">),</span>
+                                             <span class="bp">self</span><span class="p">))</span>
+                    <span class="nb">setattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s1">&#39;export_&#39;</span><span class="o">+</span><span class="n">data_name</span><span class="p">,</span>
+                            <span class="n">types</span><span class="o">.</span><span class="n">MethodType</span><span class="p">(</span><span class="k">lambda</span> <span class="n">self_</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">__f</span><span class="o">=</span><span class="n">export_func</span><span class="p">:</span>
+                                                 <span class="n">__f</span><span class="p">(</span><span class="n">x</span><span class="p">),</span>
+                                             <span class="bp">self</span><span class="p">))</span>
+                    <span class="k">break</span>
+            <span class="c1"># get_ function</span>
+            <span class="nb">setattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s1">&#39;get_&#39;</span><span class="o">+</span><span class="n">data_name</span><span class="p">,</span>
+                    <span class="n">types</span><span class="o">.</span><span class="n">MethodType</span><span class="p">(</span><span class="n">_make_get</span><span class="p">(</span><span class="n">data_name</span><span class="p">),</span>
+                                     <span class="bp">self</span><span class="p">))</span>
+            <span class="c1"># gather_ function</span>
+            <span class="nb">setattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s1">&#39;gather_&#39;</span><span class="o">+</span><span class="n">data_name</span><span class="p">,</span>
+                    <span class="n">types</span><span class="o">.</span><span class="n">MethodType</span><span class="p">(</span><span class="n">_make_gather</span><span class="p">(</span><span class="n">data_name</span><span class="p">),</span>
+                                     <span class="bp">self</span><span class="p">))</span>
+<div class="viewcode-block" id="FileDataBuffer.retrieve_data_from_cache"><a class="viewcode-back" href="../../api/zaluski.html#zaluski.filedatabuffer.FileDataBuffer.retrieve_data_from_cache">[docs]</a>    <span class="k">def</span> <span class="nf">retrieve_data_from_cache</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dirpath</span><span class="p">,</span> <span class="n">_update_caches_fd</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Retrieves data from a cache file of a directory. The data in the file</span>
+<span class="sd">        is a JSON of a data dict and a file_paths list of a FileDataBuffer,</span>
+<span class="sd">        except instead of file paths, it has just filenames.&#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="n">MPIRANK</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span>
+        <span class="n">absdirpath</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">dirpath</span><span class="p">)</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">cache_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">absdirpath</span><span class="p">,</span> <span class="n">CACHE_NAME</span><span class="p">)</span>
+            <span class="n">diskmtime</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">getmtime</span><span class="p">(</span><span class="n">cache_path</span><span class="p">)</span>
+            <span class="n">ourmtime</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cache_paths</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">absdirpath</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">diskmtime</span> <span class="o">&gt;</span> <span class="n">ourmtime</span><span class="p">:</span>
+                <span class="n">file_contents</span> <span class="o">=</span> <span class="kc">None</span>
+                <span class="n">retrieved</span> <span class="o">=</span> <span class="kc">None</span>
+                <span class="k">if</span> <span class="n">_update_caches_fd</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                    <span class="n">pos</span> <span class="o">=</span> <span class="n">_update_caches_fd</span><span class="o">.</span><span class="n">tell</span><span class="p">()</span>
+                    <span class="n">_update_caches_fd</span><span class="o">.</span><span class="n">seek</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+                    <span class="n">file_contents</span> <span class="o">=</span> <span class="n">_update_caches_fd</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+                    <span class="k">if</span> <span class="n">file_contents</span><span class="p">:</span>
+                        <span class="n">_DEBUG_OUT</span><span class="p">(</span><span class="s1">&#39;cache at &#39;</span><span class="o">+</span><span class="n">_update_caches_fd</span><span class="o">.</span><span class="n">name</span><span class="o">+</span><span class="s1">&#39; read&#39;</span><span class="p">)</span>
+                    <span class="n">_update_caches_fd</span><span class="o">.</span><span class="n">seek</span><span class="p">(</span><span class="n">pos</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">cache_path</span><span class="p">,</span> <span class="s1">&#39;r&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">cache_file</span><span class="p">:</span>
+                        <span class="n">file_contents</span> <span class="o">=</span> <span class="n">cache_file</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+                        <span class="n">_DEBUG_OUT</span><span class="p">(</span><span class="s1">&#39;cache at &#39;</span><span class="o">+</span><span class="n">cache_file</span><span class="o">.</span><span class="n">name</span><span class="o">+</span><span class="s1">&#39; read&#39;</span><span class="p">)</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="n">retrieved</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">file_contents</span><span class="p">)</span>
+                <span class="k">except</span> <span class="n">json</span><span class="o">.</span><span class="n">JSONDecodeError</span><span class="p">:</span>
+                    <span class="k">if</span> <span class="n">file_contents</span><span class="p">:</span>
+                        <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;Could not interpret cache file at &#39;</span><span class="o">+</span><span class="n">cache_path</span><span class="p">)</span>
+                        <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;You should probably delete it.&#39;</span><span class="p">)</span>
+                    <span class="k">return</span>
+                <span class="k">if</span> <span class="n">retrieved</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                    <span class="n">_DEBUG_OUT</span><span class="p">(</span><span class="s1">&#39;cache retrieved&#39;</span><span class="p">)</span>
+                    <span class="n">diskdata</span><span class="p">,</span> <span class="n">disk_file_paths</span> <span class="o">=</span> <span class="n">retrieved</span>
+                    <span class="k">for</span> <span class="n">content_key</span><span class="p">,</span> <span class="n">content</span> <span class="ow">in</span> <span class="n">diskdata</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                        <span class="k">for</span> <span class="n">data_name</span><span class="p">,</span> <span class="n">data_keys</span> <span class="ow">in</span> <span class="n">content</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                            <span class="k">for</span> <span class="n">data_key</span><span class="p">,</span> <span class="n">data</span> <span class="ow">in</span> <span class="n">data_keys</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                                <span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">content_key</span><span class="p">,{})</span>
+                                <span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="n">content_key</span><span class="p">]</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">data_name</span><span class="p">,{})</span>
+                                <span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="n">content_key</span><span class="p">]</span> \
+                                         <span class="p">[</span><span class="n">data_name</span><span class="p">]</span> \
+                                         <span class="p">[</span><span class="n">data_key</span><span class="p">]</span> <span class="o">=</span> <span class="n">data</span>
+                    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">info_pair</span> <span class="ow">in</span> <span class="n">disk_file_paths</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                        <span class="n">_DEBUG_OUT</span><span class="p">(</span><span class="s1">&#39;saving info for &#39;</span><span class="o">+</span><span class="n">name</span><span class="p">)</span>
+                        <span class="n">path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">absdirpath</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
+                        <span class="n">our_info_pair</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">file_paths</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+                        <span class="n">ourfilemtime</span> <span class="o">=</span> <span class="kc">None</span>
+                        <span class="k">if</span> <span class="n">our_info_pair</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                            <span class="n">ourfilemtime</span> <span class="o">=</span> <span class="n">our_info_pair</span><span class="p">[</span><span class="s1">&#39;mtime&#39;</span><span class="p">]</span>
+                        <span class="k">else</span><span class="p">:</span>
+                            <span class="n">ourfilemtime</span> <span class="o">=</span> <span class="mi">0</span>
+                        <span class="k">if</span> <span class="n">info_pair</span><span class="p">[</span><span class="s1">&#39;mtime&#39;</span><span class="p">]</span> <span class="o">&gt;</span> <span class="n">ourfilemtime</span><span class="p">:</span>
+                            <span class="bp">self</span><span class="o">.</span><span class="n">file_paths</span><span class="p">[</span><span class="n">path</span><span class="p">]</span> <span class="o">=</span> <span class="n">info_pair</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">cache_paths</span><span class="p">[</span><span class="n">absdirpath</span><span class="p">]</span> <span class="o">=</span> <span class="n">diskmtime</span>
+        <span class="k">except</span> <span class="ne">FileNotFoundError</span><span class="p">:</span>
+            <span class="k">pass</span></div>
+<div class="viewcode-block" id="FileDataBuffer.update_caches"><a class="viewcode-back" href="../../api/zaluski.html#zaluski.filedatabuffer.FileDataBuffer.update_caches">[docs]</a>    <span class="k">def</span> <span class="nf">update_caches</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">force</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Updates the caches for every directory the cache knows about. This</span>
+<span class="sd">        method is thread-safe.&#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="p">(</span><span class="ow">not</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cachingp</span> <span class="ow">or</span> <span class="n">force</span><span class="p">))</span> <span class="ow">or</span> <span class="n">MPIRANK</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span>
+        <span class="n">dir_paths</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">path</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">file_paths</span><span class="p">:</span>
+            <span class="n">dir_path</span><span class="p">,</span> <span class="n">name</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">dir_path</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">changed_dirs</span><span class="p">:</span>
+                <span class="n">dir_paths</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">dir_path</span><span class="p">,</span> <span class="nb">set</span><span class="p">())</span>
+                <span class="n">dir_paths</span><span class="p">[</span><span class="n">dir_path</span><span class="p">]</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">dir_path</span><span class="p">,</span> <span class="n">names</span> <span class="ow">in</span> <span class="n">dir_paths</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="n">cache_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">dir_path</span><span class="p">,</span> <span class="n">CACHE_NAME</span><span class="p">)</span>
+            <span class="n">cache_file</span> <span class="o">=</span> <span class="kc">None</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">cache_file</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="n">cache_path</span><span class="p">,</span> <span class="s1">&#39;r+&#39;</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">FileNotFoundError</span><span class="p">:</span>
+                <span class="n">cache_file</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="n">cache_path</span><span class="p">,</span> <span class="s1">&#39;w+&#39;</span><span class="p">)</span>
+            <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="n">fcntl</span><span class="o">.</span><span class="n">flock</span><span class="p">(</span><span class="n">cache_file</span><span class="p">,</span> <span class="n">fcntl</span><span class="o">.</span><span class="n">LOCK_EX</span> <span class="o">|</span> <span class="n">fcntl</span><span class="o">.</span><span class="n">LOCK_NB</span><span class="p">)</span>
+                    <span class="k">break</span>
+                <span class="k">except</span> <span class="ne">BlockingIOError</span><span class="p">:</span>
+                    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.05</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">retrieve_data_from_cache</span><span class="p">(</span><span class="n">dir_path</span><span class="p">,</span>
+                                          <span class="n">_update_caches_fd</span><span class="o">=</span><span class="n">cache_file</span><span class="p">)</span>
+            <span class="n">dir_data</span> <span class="o">=</span> <span class="p">{}</span>
+            <span class="n">dir_file_paths</span> <span class="o">=</span> <span class="p">{}</span>
+            <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">names</span><span class="p">:</span>
+                <span class="n">path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">dir_path</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
+                <span class="n">dir_file_paths</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">file_paths</span><span class="p">[</span><span class="n">path</span><span class="p">]</span>
+                <span class="n">ourhash</span> <span class="o">=</span> <span class="n">dir_file_paths</span><span class="p">[</span><span class="n">name</span><span class="p">][</span><span class="s1">&#39;hash&#39;</span><span class="p">]</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="n">dir_data</span><span class="p">[</span><span class="n">ourhash</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="n">ourhash</span><span class="p">]</span>
+                <span class="k">except</span> <span class="ne">KeyError</span><span class="p">:</span>
+                    <span class="k">pass</span>
+                <span class="c1">#_DEBUG_OUT(&#39;  updated cache with data for file at &#39;, path)</span>
+            <span class="n">cache_file</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">([</span><span class="n">dir_data</span><span class="p">,</span> <span class="n">dir_file_paths</span><span class="p">],</span> <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">))</span>
+            <span class="n">fcntl</span><span class="o">.</span><span class="n">flock</span><span class="p">(</span><span class="n">cache_file</span><span class="p">,</span> <span class="n">fcntl</span><span class="o">.</span><span class="n">LOCK_UN</span><span class="p">)</span>
+            <span class="n">cache_file</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+            <span class="n">_DEBUG_OUT</span><span class="p">(</span><span class="s1">&#39;wrote cache file at &#39;</span><span class="p">,</span> <span class="n">cache_path</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">cache_paths</span><span class="p">[</span><span class="n">dir_path</span><span class="p">]</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">getmtime</span><span class="p">(</span><span class="n">cache_path</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">changed_dirs</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span></div>
+
+    <span class="c1">## Constructors for auxiliary classes</span>
+    <span class="k">def</span> <span class="nf">_proto_args</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data_name</span><span class="p">,</span> <span class="n">args</span><span class="p">,</span> <span class="n">kwargs</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Given a set of args for a get_ accessor method, generate an object</span>
+<span class="sd">        that FileDataBuffer accessor methods can use to both call calculate_</span>
+<span class="sd">        methods and index into self.data and self.paths, based on</span>
+<span class="sd">        EncapsulatedFile encapsulations of all of the paths passed to it. It</span>
+<span class="sd">        stores a list and dict of the arg values with paths replaced by</span>
+<span class="sd">        EncapsulatedFiles, a corresponding list and dict of arg types (&#39;path&#39;,</span>
+<span class="sd">        &#39;stream&#39;, or &#39;misc&#39; depending on what arg is requested by the</span>
+<span class="sd">        calculate_ method), and the path to the first file in the args, its</span>
+<span class="sd">        contents hash, and the accessor string for the args (for indexing into</span>
+<span class="sd">        self.data). It can also be iterated over to provide the arg values in</span>
+<span class="sd">        the sequence in which they were originally part of the calculate_</span>
+<span class="sd">        method, but this feature is not currently in use.&#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="n">ProtoArgs</span><span class="p">(</span><span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s1">&#39;calculate_&#39;</span><span class="o">+</span><span class="n">data_name</span><span class="p">),</span>
+                         <span class="bp">self</span><span class="o">.</span><span class="n">_encapsulate_file</span><span class="p">,</span>
+                         <span class="n">args</span><span class="p">,</span> <span class="n">kwargs</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_encapsulate_file</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Returns an object that in theory contains the absolute path, mtime,</span>
+<span class="sd">        contents hash, and maybe contents stream of a file. The first three are</span>
+<span class="sd">        accessed directly, while the last is accessed via an accessor method,</span>
+<span class="sd">        so that it can be retrieved if necessary. Creating and updating the</span>
+<span class="sd">        object both update the external FileDataBuffer&#39;s info on that pdb.&#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="n">EncapsulatedFile</span><span class="p">(</span><span class="n">path</span><span class="p">,</span>
+                                <span class="bp">self</span><span class="o">.</span><span class="n">file_paths</span>
+                                    <span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">path</span><span class="p">),</span> <span class="p">{}))</span></div>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper"><div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../index.html">Documentation overview</a><ul>
+  <li><a href="../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    </div>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2018, Michael Szegedy.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 1.7.4</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.10</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

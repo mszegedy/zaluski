@@ -6,7 +6,7 @@
   <head>
     <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    <title>Welcome to zaluski’s documentation! &#8212; zaluski  documentation</title>
+    <title>zaluski &#8212; zaluski  documentation</title>
     <link rel="stylesheet" href="_static/alabaster.css" type="text/css" />
     <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
     <script type="text/javascript" src="_static/documentation_options.js"></script>
@@ -29,18 +29,83 @@
         <div class="bodywrapper">
           <div class="body" role="main">
             
-  <div class="section" id="welcome-to-zaluski-s-documentation">
-<h1>Welcome to zaluski’s documentation!<a class="headerlink" href="#welcome-to-zaluski-s-documentation" title="Permalink to this headline">¶</a></h1>
-<div class="toctree-wrapper compound">
+  <div class="section" id="zaluski">
+<h1>zaluski<a class="headerlink" href="#zaluski" title="Permalink to this headline">¶</a></h1>
+<p>zaluski provides a buffer class, <code class="docutils literal notranslate"><span class="pre">FileDataBuffer</span></code>, that is designed to be
+augmented with methods that compute information about files. The buffer will
+then intelligently derive new versions of these methods that cache their
+results, and/or operate concurrently on multiple sets of files or parameters.</p>
+<p>It is named after the Załuski brothers, two bishops who founded one of Europe’s
+first public libraries.</p>
+<div class="section" id="installation">
+<h2>Installation<a class="headerlink" href="#installation" title="Permalink to this headline">¶</a></h2>
+<p>In the same directory as <code class="docutils literal notranslate"><span class="pre">setup.py</span></code>, run</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>$ pip install . --user
+</pre></div>
+</div>
+<p>or</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>$ sudo pip install .
+</pre></div>
 </div>
 </div>
-<div class="section" id="indices-and-tables">
-<h1>Indices and tables<a class="headerlink" href="#indices-and-tables" title="Permalink to this headline">¶</a></h1>
+<div class="section" id="basic-usage-and-features">
+<h2>Basic usage and features<a class="headerlink" href="#basic-usage-and-features" title="Permalink to this headline">¶</a></h2>
+<p>Create a subclass of <code class="docutils literal notranslate"><span class="pre">zaluski.FileDataBuffer</span></code>, and add a method to it that
+begins with <code class="docutils literal notranslate"><span class="pre">calculate_</span></code>, and takes an argument called <code class="docutils literal notranslate"><span class="pre">path</span></code>:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">zaluski</span>
+
+<span class="k">class</span> <span class="nc">MyDataBuffer</span><span class="p">(</span><span class="n">zaluski</span><span class="o">.</span><span class="n">FileDataBuffer</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">calculate_file_size</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">())</span>
+</pre></div>
+</div>
+<p>The new subclass will then automatically create an analogous method beginning
+with <code class="docutils literal notranslate"><span class="pre">get_</span></code>, which performs the same function as the <code class="docutils literal notranslate"><span class="pre">calculate_</span></code> method,
+but also caches the result (in a hidden file). Imagine that in our directory we
+have the following file, <code class="docutils literal notranslate"><span class="pre">example.txt</span></code>:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">This</span> <span class="n">text</span> <span class="n">contains</span> <span class="n">forty</span><span class="o">-</span><span class="n">three</span> <span class="n">characters</span><span class="o">.</span>
+</pre></div>
+</div>
+<p>Then, using the MyDataBuffer we created earlier, we have:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">buf</span> <span class="o">=</span> <span class="n">MyDataBuffer</span><span class="p">()</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">buf</span><span class="o">.</span><span class="n">get_file_size</span><span class="p">(</span><span class="s1">&#39;example.txt&#39;</span><span class="p">)</span>
+<span class="go">43</span>
+</pre></div>
+</div>
+<p>This result is stored in a cache file <code class="docutils literal notranslate"><span class="pre">.zaluski_cache</span></code> in the same directory as
+<code class="docutils literal notranslate"><span class="pre">example.txt</span></code>, and all future instances of <code class="docutils literal notranslate"><span class="pre">MyDataBuffer</span></code> will remember it
+(unless you change the buffer’s version number, or delete the cache). If the
+file ever changes, the buffer will automatically recompute its results.</p>
+</div>
+<div class="section" id="more-features">
+<h2>More features<a class="headerlink" href="#more-features" title="Permalink to this headline">¶</a></h2>
 <ul class="simple">
-<li><a class="reference internal" href="genindex.html"><span class="std std-ref">Index</span></a></li>
-<li><a class="reference internal" href="py-modindex.html"><span class="std std-ref">Module Index</span></a></li>
-<li><a class="reference internal" href="search.html"><span class="std std-ref">Search Page</span></a></li>
+<li>The buffer auto-detects which arguments relate to files based on the argument
+names, allowing for paths, streams, and ordered or unordered collections of
+either. Future versions will expect you to indicate this with annotations,
+rather than using specific argument names.</li>
+<li>The buffer will also generate <code class="docutils literal notranslate"><span class="pre">gather_</span></code> versions of your methods, which can
+run the method combinatorially on a set of arguments, and, if possible,
+distribute the work over multiple processors.</li>
+<li>You can define <code class="docutils literal notranslate"><span class="pre">import_</span></code> and <code class="docutils literal notranslate"><span class="pre">export_</span></code> methods that determine how the
+result of a method is serialized.</li>
+<li>Both the computing and caching features of the buffer can be disabled at will
+on a method-by-method basis.</li>
 </ul>
+</div>
+<div class="section" id="to-do">
+<h2>To do<a class="headerlink" href="#to-do" title="Permalink to this headline">¶</a></h2>
+<ul class="simple">
+<li>Redo type hints as parameter annotations, rather than function names. Maybe
+also redo the import/export decorators.</li>
+<li>Give more fine-grained control over frequency of caching.</li>
+<li>Improve concurrency for small amounts of processors (especially two).</li>
+</ul>
+</div>
+<div class="section" id="license">
+<h2>License<a class="headerlink" href="#license" title="Permalink to this headline">¶</a></h2>
+<p>This project is licensed under GPLv3.</p>
+</div>
 </div>
 
 
@@ -51,8 +116,14 @@
         <div class="sphinxsidebarwrapper">
   <h3><a href="#">Table Of Contents</a></h3>
   <ul>
-<li><a class="reference internal" href="#">Welcome to zaluski’s documentation!</a></li>
-<li><a class="reference internal" href="#indices-and-tables">Indices and tables</a></li>
+<li><a class="reference internal" href="#">zaluski</a><ul>
+<li><a class="reference internal" href="#installation">Installation</a></li>
+<li><a class="reference internal" href="#basic-usage-and-features">Basic usage and features</a></li>
+<li><a class="reference internal" href="#more-features">More features</a></li>
+<li><a class="reference internal" href="#to-do">To do</a></li>
+<li><a class="reference internal" href="#license">License</a></li>
+</ul>
+</li>
 </ul>
 <div class="relations">
 <h3>Related Topics</h3>
