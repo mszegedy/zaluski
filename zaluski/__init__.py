@@ -1,5 +1,5 @@
 # zaluski/__init__.py
-# by Michael Szegedy, 2018
+# by Maria Szegedy, 2019
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -33,6 +33,6 @@ __all__ = [
 ]
 
 __title__ = 'zaluski'
-__author__ = 'Michael Szegedy'
+__author__ = 'Maria Szegedy'
 __license__ = 'GPLv3'
-__copyright__ = '2018, Michael Szegedy'
+__copyright__ = '2019, Maria Szegedy'

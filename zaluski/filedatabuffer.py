@@ -1,5 +1,5 @@
 # zaluski/filedatabuffer.py
-# by Michael Szegedy, 2018
+# by Maria Szegedy, 2019
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -21,7 +21,7 @@ caching them in the process.'''
 ### Imports
 ## Python Standard Library
 import re
-import types, copy, enum
+import collections, types, copy, enum
 import itertools
 import zlib
 import hashlib
@@ -40,8 +40,6 @@ from mpi4py import MPI
 ### Constants
 
 DEBUG = False
-VERSION = '0.2.0'
-CACHE_NAME = '.zaluski_cache'
 
 MPICOMM = MPI.COMM_WORLD
 MPIRANK = MPICOMM.Get_rank()
@@ -94,7 +92,7 @@ def non_cacheable(f):
 ### Special compress/decompress functions
 
 def compress_ndarray(array):
-    '''Compress a NumPy ndarray into a JSON-serializable object.'''
+    '''Compress a numpy ndarray into a JSON-serializable object.'''
     # Final form is:
     # [bunch of bits as Base 85-encoded string,
     #  tuple containing matrix side lengths]
@@ -105,7 +103,7 @@ def compress_ndarray(array):
             str(array.dtype)]
 
 def decompress_ndarray(compressed_array):
-    '''Recover a NumPy ndarray compressed by compress_ndarray().'''
+    '''Recover a numpy ndarray compressed by compress_ndarray().'''
     data, shape, dtype = compressed_array
     return np.reshape(
         np.frombuffer(
@@ -124,41 +122,71 @@ def decompress_pickleable(compressed_o):
     '''Recover an object compressed by compress_pickleable().'''
     return dill.loads(base64.b85decode(compressed_o))
 
-### Helper classes
+### FileDataBuffer helper classes
 
-class Argument:
-    '''The object that ProtoArgs uses to represent a single argument.'''
-    NAME_MATCHER = re.compile(r'(.*_)?'
-                              r'(path|stream)'
-                              r'(_list|_set|)')
-    def __init__(self, name, value, encapsulate):
-        self.name = name
-        matches = Argument.NAME_MATCHER.fullmatch(name)
-        if None in (matches, value):
-            self.value          = value
-            self.base_type      = 'misc'
-            self.container_type = ''
-        else:
-            self.base_type      = matches.group(2)
-            self.container_type = matches.group(3).lstrip('_')
-            if self.container_type == '':
+class BaseTypes(enum.Enum):
+    '''Represents a classification of the type of an argument, or if the
+    argument is a collection, a classification of the types of the things in
+    said collection. We currently only care about whether it's a string
+    containing a path to an existing file (PATH) or something else (MISC).'''
+    MISC = 'MISC'
+    PATH = 'PATH'
+
+class ContainerTypes(enum.Enum):
+    '''Represents a classification of the type of an argument when it's a
+    container. We currently only care about whether it's a set (SET), a sequence
+    (SEQUENCE), or something else (MISC).'''
+    MISC = 'MISC'
+    SET = 'SET'
+    SEQUENCE = 'SEQUENCE'
+
+class _Argument:
+    '''The object that _ProtoArgs uses to represent a single argument.'''
+    def __init__(self, value, file_paths_dict):
+        def encapsulate(path):
+            return EncapsulatedFile(
+                path,
+                file_paths_dict.setdefault(os.path.abspath(path), {}))
+
+        if isinstance(value, str):
+            try:
+                _ = open(value)
                 self.value = encapsulate(value)
-            else:
+                self.base_type = BaseTypes.PATH
+                self.container_type = ContainerTypes.MISC
+                return
+            except FileNotFoundError:
+                pass
+        if isinstance(value, (collections.abc.Set, collections.abc.Sequence)) \
+           and all(isinstance(item, str) for item in value):
+            try:
+                _ = tuple(open(item) for item in value)
                 self.value = type(value)(encapsulate(path) for path in value)
+                self.base_type = BaseTypes.PATH
+                if isinstance(value, collections.abc.Set):
+                    self.container_type = ContainerTypes.SET
+                else:
+                    self.container_type = ContainerTypes.SEQUENCE
+                return
+            except FileNotFoundError:
+                pass
+        self.value          = value
+        self.base_type      = BaseTypes.MISC
+        self.container_type = ContainerTypes.MISC
     @property
     def accessor_items(self):
         '''Items to add to the accessor tuple for this argument.'''
-        if self.base_type == 'misc':
+        if self.base_type == BaseTypes.MISC:
             yield self.value
             return
-        if self.container_type == '':
+        if self.container_type == ContainerTypes.MISC:
             yield self.value.hash
             return
-        if self.container_type == 'list':
+        if self.container_type == ContainerTypes.SEQUENCE:
             for f in self.value:
                 yield f.hash
             return
-        if self.container_type == 'set':
+        if self.container_type == ContainerTypes.SET:
             # sorted by hash (see EncapsulatedFile)
             for f in sortedcontainers.SortedSet(self.value):
                 yield f.hash
@@ -167,16 +195,16 @@ class Argument:
     def encapsulated_files(self):
         '''Encapsulated files to add to self_.encapsulated_files for this
         argument.'''
-        if self.base_type == 'misc':
+        if self.base_type == BaseTypes.MISC:
             return
-        if self.container_type == '':
+        if self.container_type == ContainerTypes.MISC:
             yield self.value
             return
-        if self.container_type == 'list':
+        if self.container_type == ContainerTypes.SEQUENCE:
             for f in self.value:
                 yield f
             return
-        if self.container_type == 'set':
+        if self.container_type == ContainerTypes.SET:
             # sorted by hash (see EncapsulatedFile)
             for f in sortedcontainers.SortedSet(self.value):
                 yield f
@@ -184,21 +212,17 @@ class Argument:
     @property
     def calcvalue(self):
         '''Value of arg for calling calculate_ with.'''
-        if self.base_type == 'misc':
+        if self.base_type == BaseTypes.MISC:
             return self.value
-        accessing_fn = {'path':   lambda x: x.path,
-                        'stream': lambda x: x.stream,
-                       }[self.base_type]
-        if self.container_type == '':
-            return accessing_fn(self.value)
-        return type(self.value)(accessing_fn(f) \
-                                for f in self.value)
+        if self.container_type == ContainerTypes.MISC:
+            return self.value.path
+        return type(self.value)(f.path for f in self.value)
 
-class ProtoArgs():
+class _ProtoArgs():
     '''An object that get_ and gather_ methods use to construct arguments to
     call their associated calculate_ methods with. More information under
     FileDataBuffer._proto_args().'''
-    def __init__(self, calcfxn, encapsulate, args, kwargs):
+    def __init__(self, calcfxn, file_paths_dict, args, kwargs):
         # index of each argument (with number indices for positional
         # arguments, but string indices for keyword arguments); needed
         # to provide iteration (unused)
@@ -227,9 +251,9 @@ class ProtoArgs():
             positargs = argspec.args[1:-lendefaults]
         else:
             positargs = argspec.args[1:]
-        for i, arg_name in enumerate(positargs):
+        for i in range(len(positargs)):
             self.indices.append(i)
-            arg = Argument(arg_name, args[i], encapsulate)
+            arg = _Argument(args[i], file_paths_dict)
             self._args.append(arg)
             self.encapsulated_files.extend(arg.encapsulated_files)
             accessor_list.extend(arg.accessor_items)
@@ -242,11 +266,10 @@ class ProtoArgs():
                      if kwarg in kwargs.keys())
         for kwarg_name in namedargs:
             self.indices.append(kwarg_name)
-            arg = Argument(kwarg_name, kwargs[kwarg_name], encapsulate)
+            arg = _Argument(kwargs[kwarg_name], file_paths_dict)
             self._kwargs[kwarg_name] = arg
             self.encapsulated_files.extend(arg.encapsulated_files)
             accessor_list.extend(arg.accessor_items)
-        accessor_list.append(VERSION)
         self.accessor_string = str(tuple(accessor_list))
     def __getitem__(self, index):
         if isinstance(index, int):
@@ -259,11 +282,11 @@ class ProtoArgs():
                                 for i in self.indices[nargs:]))
     @property
     def args(self):
-        '''This ProtoArgs's represented positional args.'''
+        '''This _ProtoArgs's represented positional args.'''
         return [arg.value for arg in self._args]
     @property
     def kwargs(self):
-        '''This ProtoArgs's represented keyword args.'''
+        '''This _ProtoArgs's represented keyword args.'''
         return {name: arg.value for name, arg in self._kwargs.items()}
     @property
     def paths(self):
@@ -298,7 +321,7 @@ class ProtoArgs():
         return {name: arg.calcvalue \
                 for name, arg in self._kwargs.items()}
     def update_paths(self):
-        '''Make the master FileDataBuffer of this Argument's
+        '''Make the master FileDataBuffer of this _Argument's
         EncapsulatedFiles aware of the respective associated files' mtimes and
         hashes.'''
         for f in self.encapsulated_files:
@@ -319,7 +342,6 @@ class EncapsulatedFile:
             self.file_paths_dict = file_paths_dict
             self.mtime = self.file_paths_dict.setdefault('mtime', 0)
             self.hash = self.file_paths_dict.setdefault('hash', None)
-            self._stream = None
             diskmtime = os.path.getmtime(self.path)
             if diskmtime > self.mtime or self.hash is None:
                 self.update(diskmtime)
@@ -342,15 +364,6 @@ class EncapsulatedFile:
             return method(hash(self), hash(other))
         except (AttributeError, TypeError):
             return NotImplemented
-    @property
-    def stream(self, mtime=None, encoding='ascii'):
-        '''Stream view of associated file.'''
-        self.update(mtime)
-        if self._stream is None:
-            return None
-        return io.StringIO(self._stream
-                               .getvalue()
-                               .decode(encoding))
     def update_file_paths_dict(self):
         '''Make this EncapsulatedFile's master FileDataBuffer aware of the mtime
         and hash of our associated file.'''
@@ -367,7 +380,6 @@ class EncapsulatedFile:
                 hash_fun = hashlib.md5()
                 hash_fun.update(contents)
                 self.hash = hash_fun.hexdigest()
-                self._stream = io.BytesIO(contents)
                 self.update_file_paths_dict()
 
 ### FileDataBuffer and friends
@@ -380,7 +392,7 @@ def _make_get(data_name):
     # arguments being hashables. See the FileDataBuffer docs for more info.
     def get(self_, *args, **kwargs):
         calculate = getattr(self_, 'calculate_'+data_name)
-        proto_args = self_._proto_args(data_name, args, kwargs)
+        proto_args = self_._proto_args(calculate, args, kwargs)
         if hasattr(calculate, 'non_cacheable'):
             return calculate(*proto_args.calcargs,
                              **proto_args.calckwargs)
@@ -479,11 +491,13 @@ def _make_gather(data_name):
                 except KeyError:
                     pass
             return final_result
-        MPITag = enum.Enum('MPITag', 'QUIT_TAG READY_TAG DONE_TAG WORK_TAG')
-        # QUIT_TAG:  getting this instead of a path kills a worker thread
+        MPITag = enum.Enum('MPITag', 'READY_TAG DONE_TAG WORK_TAG')
+        class QUIT_MSG:
+            pass
         # READY_TAG: used once by worker, to sync startup
         # DONE_TAG:  used by worker to pass result and request new job
         # WORK_TAG:  used by master to pass next path to worker
+        # QUIT_MSG:  getting this instead of a path kills a worker thread
         # will be used to index into self_.data to retrieve final result:
         file_indices_list = []
         if MPIRANK == 0:
@@ -515,7 +529,7 @@ def _make_gather(data_name):
             ## main loop
             for index, uargs_and_ukwargs in enumerate(unpack_args()):
                 uargs, ukwargs = uargs_and_ukwargs
-                proto_args = self_.proto_args(data_name, uargs, ukwargs)
+                proto_args = self_.proto_args(uargs, ukwargs)
                 # lazy cache retrieval!
                 if cacheablep:
                     for path in proto_args.paths:
@@ -553,14 +567,14 @@ def _make_gather(data_name):
                                               for path in result[1].paths)
                     self_.update_caches()
                 _DEBUG_OUT('all files done. killing '+str(result_source))
-                MPICOMM.send(MPITag.QUIT_TAG,
+                MPICOMM.send(QUIT_MSG,
                              dest=result_source, tag=MPITag.WORK_TAG)
                 _DEBUG_OUT('worker killed')
         else:
             MPICOMM.send(None, dest=0, tag=MPITag.READY_TAG)
             while True:
                 package = MPICOMM.recv(source=0, tag=MPITag.WORK_TAG)
-                if package == MPITag.QUIT_TAG:
+                if package == QUIT_MSG:
                     break
                 index, proto_args = package
                 result_data = calculate(*proto_args.calcargs,
@@ -671,7 +685,9 @@ class FileDataBuffer():
     '''
 
     ## Core functionality
-    def __init__(self):
+    def __init__(self, *, filename='.zaluski_cache', version=0):
+        self.filename = filename
+        self.version = version
         self.calculatingp = True
         self.cachingp = MPIRANK == 0
         self.data = {}
@@ -687,7 +703,7 @@ class FileDataBuffer():
 
             # Rationale for this warning: The point at which the buffer
             # actually fails when you forget a self arg is deep inside
-            # ProtoArgs, which is very cryptic and hard to debug.
+            # _ProtoArgs, which is very cryptic and hard to debug.
             if inspect.getfullargspec(calcfxn).args[0] != 'self':
                 warnings.warn('Added method calculate_' + data_name + \
                               ' has no self arg.', SyntaxWarning)
@@ -725,7 +741,7 @@ class FileDataBuffer():
             return
         absdirpath = os.path.abspath(dirpath)
         try:
-            cache_path = os.path.join(absdirpath, CACHE_NAME)
+            cache_path = os.path.join(absdirpath, self.filename)
             diskmtime = os.path.getmtime(cache_path)
             ourmtime = self.cache_paths.setdefault(absdirpath, 0)
             if diskmtime > ourmtime:
@@ -755,8 +771,8 @@ class FileDataBuffer():
                     for content_key, content in diskdata.items():
                         for data_name, data_keys in content.items():
                             for data_key, data in data_keys.items():
-                                self.data.setdefault(content_key,{})
-                                self.data[content_key].setdefault(data_name,{})
+                                self.data.setdefault(content_key, {})
+                                self.data[content_key].setdefault(data_name, {})
                                 self.data[content_key] \
                                          [data_name] \
                                          [data_key] = data
@@ -786,7 +802,7 @@ class FileDataBuffer():
                 dir_paths.setdefault(dir_path, set())
                 dir_paths[dir_path].add(name)
         for dir_path, names in dir_paths.items():
-            cache_path = os.path.join(dir_path, CACHE_NAME)
+            cache_path = os.path.join(dir_path, self.filename)
             cache_file = None
             try:
                 cache_file = open(cache_path, 'r+')
@@ -819,7 +835,7 @@ class FileDataBuffer():
             self.changed_dirs = set()
 
     ## Constructors for auxiliary classes
-    def _proto_args(self, data_name, args, kwargs):
+    def _proto_args(self, calcfxn, args, kwargs):
         '''Given a set of args for a get_ accessor method, generate an object
         that FileDataBuffer accessor methods can use to both call calculate_
         methods and index into self.data and self.paths, based on
@@ -832,9 +848,9 @@ class FileDataBuffer():
         self.data). It can also be iterated over to provide the arg values in
         the sequence in which they were originally part of the calculate_
         method, but this feature is not currently in use.'''
-        return ProtoArgs(getattr(self, 'calculate_'+data_name),
-                         self._encapsulate_file,
-                         args, kwargs)
+        return _ProtoArgs(calcfxn,
+                          self._encapsulate_file,
+                          args, kwargs)
 
     def _encapsulate_file(self, path):
         '''Returns an object that in theory contains the absolute path, mtime,
