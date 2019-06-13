@@ -849,7 +849,7 @@ class FileDataBuffer():
         the sequence in which they were originally part of the calculate_
         method, but this feature is not currently in use.'''
         return _ProtoArgs(calcfxn,
-                          self._encapsulate_file,
+                          self.file_paths,
                           args, kwargs)
 
     def _encapsulate_file(self, path):
