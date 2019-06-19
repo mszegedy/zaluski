@@ -148,28 +148,21 @@ class _Argument:
                 path,
                 file_paths_dict.setdefault(os.path.abspath(path), {}))
 
-        if isinstance(value, str):
-            try:
-                _ = open(value)
-                self.value = encapsulate(value)
-                self.base_type = BaseTypes.PATH
-                self.container_type = ContainerTypes.MISC
-                return
-            except FileNotFoundError:
-                pass
+        if isinstance(value, str) and os.path.isfile(value):
+            self.value = encapsulate(value)
+            self.base_type = BaseTypes.PATH
+            self.container_type = ContainerTypes.MISC
+            return
         if isinstance(value, (collections.abc.Set, collections.abc.Sequence)) \
-           and all(isinstance(item, str) for item in value):
-            try:
-                _ = tuple(open(item) for item in value)
-                self.value = type(value)(encapsulate(path) for path in value)
-                self.base_type = BaseTypes.PATH
-                if isinstance(value, collections.abc.Set):
-                    self.container_type = ContainerTypes.SET
-                else:
-                    self.container_type = ContainerTypes.SEQUENCE
-                return
-            except FileNotFoundError:
-                pass
+           and all(isinstance(item, str) for item in value) \
+           and all(os.path.isfile(item) for item in value):
+            self.value = type(value)(encapsulate(path) for path in value)
+            self.base_type = BaseTypes.PATH
+            if isinstance(value, collections.abc.Set):
+                self.container_type = ContainerTypes.SET
+            else:
+                self.container_type = ContainerTypes.SEQUENCE
+            return
         self.value          = value
         self.base_type      = BaseTypes.MISC
         self.container_type = ContainerTypes.MISC
