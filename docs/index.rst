@@ -53,10 +53,9 @@ file ever changes, the buffer will automatically recompute its results.
 More features
 -------------
 
-* The buffer auto-detects which arguments relate to files based on the argument
-  names, allowing for paths, streams, and ordered or unordered collections of
-  either. Future versions will expect you to indicate this with annotations,
-  rather than using specific argument names.
+* The buffer auto-detects which arguments relate to files based on their types,
+  and will invalidate the cache if the file in question has changed. Arguments
+  can be paths or collections of paths (either ordered or unordered, but flat).
 * The buffer will also generate ``gather_`` versions of your methods, which can
   run the method combinatorially on a set of arguments, and, if possible,
   distribute the work over multiple processors.
@@ -68,8 +67,6 @@ More features
 To do
 -----
 
-* Redo type hints as parameter annotations, rather than function names. Maybe
-  also redo the import/export decorators.
 * Give more fine-grained control over frequency of caching.
 * Improve concurrency for small amounts of processors (especially two).
 
